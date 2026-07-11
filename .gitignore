@@ -1,0 +1,26 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+*.log
+*.failed.*
+*.tmp
+.DS_Store
+.env
+.env.*
+config.json
+
+# Local test/user media and generated subtitle outputs
+*.srt
+*.ass
+*.vtt
+*.mkv
+*.mp4
+*.avi
+*.mov
+*.webm
+*.m4v
+._*
+Media test/
+media test/
