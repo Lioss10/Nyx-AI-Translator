@@ -4,6 +4,44 @@ Structure-preserving AI subtitle translator in a single Python script.
 
 Nyx-AI-Translator does **not** ask a model to rewrite your whole subtitle file. It parses subtitles, extracts only the visible text, translates that text, then rebuilds the original subtitle shell with timing and styling preserved.
 
+## How it works
+
+Nyx-AI-Translator keeps subtitle structure local. Only clean dialogue text is sent to the selected translator/provider.
+
+![Nyx-AI-Translator workflow](assets/workflow.svg)
+
+## Structure-preserving translation
+
+Instead of sending the whole subtitle file to the AI, the tool separates subtitle structure from dialogue.
+
+![Subtitle parse and rebuild example](assets/parse-rebuild-example.svg)
+
+Example ASS subtitle line:
+
+```ass
+Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,{\an8}Hello, {\i1}friend{\i0}!
+```
+
+The tool extracts only the dialogue text and protects style tags as placeholders:
+
+```json
+[{"id": "1", "text": "Hello, <TAG_2>friend<TAG_3>!"}]
+```
+
+The translator returns:
+
+```json
+[{"id": "1", "text": "مرحباً، <TAG_2>صديقي<TAG_3>!"}]
+```
+
+Then Nyx-AI-Translator rebuilds the original subtitle line:
+
+```ass
+Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,{\an8}مرحباً، {\i1}صديقي{\i0}!
+```
+
+Timing, style, font, ASS tags, and subtitle structure stay in the correct place.
+
 ## Features
 
 - Interactive CLI for normal users.
@@ -190,6 +228,19 @@ Recommended quality path:
 
 For Arabic output, the tool warns if likely untranslated English words remain, for example ordinary words like `evil`, `next`, or `during`. Proper nouns/acronyms can still be valid and may remain untranslated.
 
+## Provider quality guide
+
+| Provider | API key needed | Best for | Quality |
+|---|---:|---|---|
+| `free` | No | Testing, quick rough subtitles | Basic |
+| `openrouter` | Yes | Real subtitle translation | Recommended |
+| `openai` | Yes | High-quality subtitle translation | Recommended |
+| `gemini` | Yes | High-quality subtitle translation | Recommended |
+| `ollama` | Local server | Private/local workflows | Depends on model |
+| `deepl` / `google_cloud` / `azure` | Yes | Stable machine translation | Good, less context-aware |
+
+For publish-quality Arabic subtitles, use `openrouter`, `openai`, or `gemini`. The `free` provider is useful for testing but may produce awkward or literal translations.
+
 AI/provider options:
 
 - `openrouter`
@@ -201,28 +252,6 @@ AI/provider options:
 - `ollama`
 - `custom_openai`
 - `auto`
-
-## How structure preservation works
-
-For ASS input like:
-
-```ass
-Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,{\\an8}Hello, {\\i1}friend{\\i0}!
-```
-
-The translator sends only text/placeholders:
-
-```json
-[{"id": "1", "text": "Hello, <TAG_2>friend<TAG_3>!"}]
-```
-
-Then rebuilds:
-
-```ass
-Dialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,{\\an8}مرحبا، {\\i1}صديقي{\\i0}!
-```
-
-Timing, style, and tags stay local.
 
 ## Test
 

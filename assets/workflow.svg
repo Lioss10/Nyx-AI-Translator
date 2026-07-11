@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
+  <title id="title">Nyx-AI-Translator workflow</title>
+  <desc id="desc">Dark workflow diagram showing subtitle input, parsing, clean text extraction, translation, rebuild, and translated output.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0d1117"/>
+      <stop offset="1" stop-color="#161b22"/>
+    </linearGradient>
+    <pattern id="grid" width="36" height="36" patternUnits="userSpaceOnUse">
+      <path d="M36 0 L0 0 0 36" fill="none" stroke="#30363d" stroke-width="0.55" opacity="0.55"/>
+    </pattern>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000" flood-opacity="0.35"/>
+    </filter>
+    <marker id="arrow" markerWidth="14" markerHeight="14" refX="11" refY="7" orient="auto">
+      <path d="M2,2 L12,7 L2,12 Z" fill="#58a6ff"/>
+    </marker>
+    <style>
+      .title{font:800 38px Inter,Segoe UI,Arial,sans-serif;fill:#f0f6fc}.sub{font:500 18px Inter,Segoe UI,Arial,sans-serif;fill:#8b949e}.box{fill:#161b22;stroke:#30363d;stroke-width:2;rx:22;filter:url(#shadow)}.box-blue{stroke:#58a6ff}.box-green{stroke:#3fb950}.box-purple{stroke:#a371f7}.box-amber{stroke:#d29922}.h{font:800 21px Inter,Segoe UI,Arial,sans-serif;fill:#f0f6fc}.p{font:500 14px Inter,Segoe UI,Arial,sans-serif;fill:#c9d1d9}.tag{font:700 12px ui-monospace,SFMono-Regular,Consolas,monospace;fill:#79c0ff}.arrow{stroke:#58a6ff;stroke-width:4;fill:none;marker-end:url(#arrow);stroke-linecap:round}.pill{fill:#0d419d;stroke:#58a6ff;stroke-width:1}.pillText{font:800 11px ui-monospace,SFMono-Regular,Consolas,monospace;fill:#f0f6fc}.icon{font:700 27px Inter,Segoe UI Emoji,Arial,sans-serif;fill:#58a6ff}.note{font:600 14px Inter,Segoe UI,Arial,sans-serif;fill:#7ee787}.privacy{fill:#0f2a1a;stroke:#238636;stroke-width:1.5;rx:16}.tiny{font:700 11px ui-monospace,SFMono-Regular,Consolas,monospace;fill:#79c0ff}
+    </style>
+  </defs>
+  <rect width="1200" height="760" fill="url(#bg)"/>
+  <rect width="1200" height="760" fill="url(#grid)"/>
+  <circle cx="1110" cy="90" r="125" fill="#1f6feb" opacity="0.12"/>
+  <circle cx="95" cy="680" r="150" fill="#238636" opacity="0.13"/>
+  <text x="70" y="70" class="title">Nyx-AI-Translator Workflow</text>
+  <text x="70" y="104" class="sub">Translate subtitles while keeping timing, styles, tags, and cue structure local.</text>
+
+  <g transform="translate(70,155)">
+    <rect class="box box-blue" width="300" height="130" rx="22"/>
+    <text x="25" y="45" class="icon">🎬</text>
+    <text x="72" y="43" class="h">Input</text>
+    <text x="72" y="72" class="p">Video or subtitle file</text>
+    <rect x="72" y="91" width="46" height="23" rx="11" class="pill"/><text x="84" y="107" class="pillText">MKV</text>
+    <rect x="128" y="91" width="46" height="23" rx="11" class="pill"/><text x="140" y="107" class="pillText">SRT</text>
+    <rect x="184" y="91" width="46" height="23" rx="11" class="pill"/><text x="196" y="107" class="pillText">ASS</text>
+    <rect x="240" y="91" width="42" height="23" rx="11" class="pill"/><text x="252" y="107" class="pillText">VTT</text>
+  </g>
+  <path class="arrow" d="M372 220 L480 220"/>
+  <g transform="translate(480,155)">
+    <rect class="box box-purple" width="300" height="130" rx="22"/>
+    <text x="25" y="45" class="icon">🔎</text>
+    <text x="72" y="43" class="h">Detect + Parse</text>
+    <text x="72" y="72" class="p">Read format, tracks, cues</text>
+    <text x="72" y="99" class="p">Keep timing and styles local</text>
+  </g>
+  <path class="arrow" d="M782 220 L890 220"/>
+  <g transform="translate(890,155)">
+    <rect class="box box-green" width="240" height="130" rx="22"/>
+    <text x="22" y="45" class="icon">✂️</text>
+    <text x="68" y="43" class="h">Clean Text</text>
+    <text x="68" y="72" class="p">Dialogue only</text>
+    <text x="68" y="99" class="p">Tags → placeholders</text>
+  </g>
+
+  <path class="arrow" d="M1010 287 C1010 334 945 350 870 370"/>
+  <g transform="translate(710,350)">
+    <rect class="box box-amber" width="350" height="135" rx="22"/>
+    <text x="25" y="46" class="icon">🤖</text>
+    <text x="75" y="43" class="h">Translate</text>
+    <text x="75" y="72" class="p">Provider receives clean units</text>
+    <text x="75" y="101" class="tiny">free · openrouter · openai</text>
+    <text x="75" y="121" class="tiny">gemini · ollama · custom API</text>
+  </g>
+  <path class="arrow" d="M708 417 L505 417"/>
+  <g transform="translate(165,350)">
+    <rect class="box box-green" width="340" height="135" rx="22"/>
+    <text x="25" y="46" class="icon">🧩</text>
+    <text x="75" y="43" class="h">Rebuild Subtitle</text>
+    <text x="75" y="72" class="p">Put translation back</text>
+    <text x="75" y="99" class="p">Restore timing, tags, styles</text>
+  </g>
+  <path class="arrow" d="M335 487 C335 535 430 560 505 575"/>
+  <g transform="translate(405,565)">
+    <rect class="box box-blue" width="390" height="130" rx="22"/>
+    <text x="25" y="46" class="icon">✅</text>
+    <text x="75" y="43" class="h">Translated Output</text>
+    <text x="75" y="72" class="p">Same structure</text>
+    <text x="75" y="99" class="p">Translated dialogue restored</text>
+    <text x="75" y="120" class="tag">Episode.ar.srt · Episode.ar.ass</text>
+  </g>
+  <rect x="70" y="713" width="1060" height="32" rx="16" class="privacy"/>
+  <text x="92" y="734" class="note">Privacy model: providers receive clean text units, not the full subtitle shell.</text>
+</svg>
