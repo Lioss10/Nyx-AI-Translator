@@ -1,5 +1,9 @@
 # Nyx-AI-Translator
 
+<p align="center">
+  <img src="assets/logo.png" alt="Nyx-AI-Translator logo" width="180">
+</p>
+
 Structure-preserving AI subtitle translator in a single Python script.
 
 Nyx-AI-Translator does **not** ask a model to rewrite your whole subtitle file. It parses subtitles, extracts only the visible text, translates that text, then rebuilds the original subtitle shell with timing and styling preserved.
@@ -15,6 +19,54 @@ Nyx-AI-Translator keeps subtitle structure local. Only clean dialogue text is se
 Instead of sending the whole subtitle file to the AI, the tool separates subtitle structure from dialogue.
 
 ![Subtitle parse and rebuild example](assets/parse-rebuild-example.svg)
+
+### SRT example
+
+Original subtitle:
+
+```srt
+1
+00:00:01,000 --> 00:00:03,000
+Hello, world!
+
+2
+00:00:04,000 --> 00:00:05,500
+How are you?
+```
+
+Nyx-AI-Translator extracts only the dialogue text:
+
+```json
+[
+  {"id": "1", "text": "Hello, world!"},
+  {"id": "2", "text": "How are you?"}
+]
+```
+
+The translator returns:
+
+```json
+[
+  {"id": "1", "text": "مرحباً بالعالم!"},
+  {"id": "2", "text": "كيف حالك؟"}
+]
+```
+
+Rebuilt subtitle:
+
+```srt
+1
+00:00:01,000 --> 00:00:03,000
+مرحباً بالعالم!
+
+2
+00:00:04,000 --> 00:00:05,500
+كيف حالك؟
+```
+
+Cue numbers and timestamps stay exactly where they belong.
+
+### ASS example
 
 Example ASS subtitle line:
 
