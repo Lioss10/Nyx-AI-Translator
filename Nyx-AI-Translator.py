@@ -430,15 +430,18 @@ def make_output_path(source: Path, target_language: str, output_ext: str, overwr
 def translation_already_exists(video: Path, target_language: str) -> Path | None:
     """Check if a translated subtitle already exists next to a video file.
 
-    Looks for files like Episode.ar.srt, Episode.ar.ass, etc.
+    Looks for files like Episode.ar.srt, Episode.ar.ass, and also
+    Episode.ar.failed.srt (validation-failed output) so that files
+    that need manual review aren't silently re-translated every run.
     Returns the path if found, None otherwise.
     """
     code = normalize_language(target_language)
     stem = strip_known_language_suffix(video.stem)
-    for ext in SUPPORTED_SUBTITLES:
-        candidate = video.with_name(f"{stem}.{code}{ext}")
-        if candidate.exists():
-            return candidate
+    # Match: stem.code.ext, stem.code.failed.ext, stem.code.N.ext (numbered dedup)
+    pattern = re.compile(re.escape(f"{stem}.{code}") + r"(?:\.failed|\.(\d+))?" + r"\.\w+$", re.IGNORECASE)
+    for sibling in video.parent.iterdir():
+        if sibling.is_file() and sibling.suffix.lower() in SUPPORTED_SUBTITLES and pattern.match(sibling.name):
+            return sibling
     return None
 
 

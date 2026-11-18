@@ -337,6 +337,19 @@ def test_translation_already_exists_returns_none_when_missing(tmp_path):
     assert result is None
 
 
+def test_translation_already_exists_finds_failed_variant(tmp_path):
+    nyx = load_module()
+    video = tmp_path / "Episode 01.mkv"
+    video.write_text("fake", encoding="utf-8")
+    # Simulates validation-failed output: Episode 01.ar.failed.ass
+    failed = tmp_path / "Episode 01.ar.failed.ass"
+    failed.write_text("failed output", encoding="utf-8")
+
+    result = nyx.translation_already_exists(video, "arabic")
+    assert result is not None
+    assert result.name == "Episode 01.ar.failed.ass"
+
+
 def test_pick_subtitle_track_strategy_first():
     nyx = load_module()
     tracks = [
