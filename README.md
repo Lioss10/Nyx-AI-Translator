@@ -122,7 +122,7 @@ Timing, style, font, ASS tags, and subtitle structure stay in the correct place.
 - **Required for embedded subtitle mode:**
   - `ffprobe`
   - `ffmpeg`
-  - Install with the tool: `py -3 Nyx-AI-Translator.py --install-deps --yes` on Windows, or the OS command printed by `--check`.
+  - Install with the tool: `run-windows.bat --install-deps --yes` on Windows, or the OS command printed by `--check`.
 - **Required for bitmap/PGS subtitle OCR:**
   - `pgsrip` — `pip install "pgsrip[rapidocr]"`
   - `mkvmerge` from MKVToolNix
@@ -186,14 +186,18 @@ sudo apt install ffmpeg mkvtoolnix
 ## Check requirements
 
 ```bash
-python Nyx-AI-Translator.py --check
+run-windows.bat --check
 ```
+
+> On macOS/Linux, use `python Nyx-AI-Translator.py --check` instead.
 
 ## Interactive use
 
 ```bash
-python Nyx-AI-Translator.py
+run-windows.bat
 ```
+
+> On macOS/Linux, use `python Nyx-AI-Translator.py` instead.
 
 Menu:
 
@@ -208,8 +212,10 @@ Menu:
 ## External subtitle example
 
 ```bash
-python Nyx-AI-Translator.py --subtitle "Episode 01.en.srt" --from en --to ar --provider free
+run-windows.bat --subtitle "Episode 01.en.srt" --from en --to ar --provider free
 ```
+
+> On macOS/Linux: `python Nyx-AI-Translator.py --subtitle "Episode 01.en.srt" --from en --to ar --provider free`
 
 Output:
 
@@ -222,13 +228,13 @@ Episode 01.ar.srt
 First check tracks interactively:
 
 ```bash
-python Nyx-AI-Translator.py
+run-windows.bat
 ```
 
 Or direct mode if you know the subtitle track index:
 
 ```bash
-python Nyx-AI-Translator.py --video "Episode 01.mkv" --track 0 --from en --to ar --provider free
+run-windows.bat --video "Episode 01.mkv" --track 0 --from en --to ar --provider free
 ```
 
 Output:
@@ -242,13 +248,13 @@ Episode 01.ar.ass
 Translate all video files in a folder at once. The tool scans each video for embedded subtitle tracks, auto-picks when there is a single track, and prompts if there are multiple.
 
 ```bash
-python Nyx-AI-Translator.py --folder "/path/to/anime-season" --from en --to ar --provider openrouter
+run-windows.bat --folder "/path/to/anime-season" --from en --to ar --provider openrouter
 ```
 
 Recursive mode (includes subfolders):
 
 ```bash
-python Nyx-AI-Translator.py --folder "/path/to/library" --from en --to ar --provider openrouter --recursive
+run-windows.bat --folder "/path/to/library" --from en --to ar --provider openrouter --recursive
 ```
 
 Translated subtitles are saved next to each video file.
@@ -286,7 +292,7 @@ sudo apt install mkvtoolnix
 Then use normally — PGS tracks are handled automatically:
 
 ```bash
-python Nyx-AI-Translator.py --video "bluray-episode.mkv" --track 0 --from en --to ar --provider openrouter
+run-windows.bat --video "bluray-episode.mkv" --track 0 --from en --to ar --provider openrouter
 ```
 
 ## Provider configuration
@@ -294,7 +300,7 @@ python Nyx-AI-Translator.py --video "bluray-episode.mkv" --track 0 --from en --t
 Run the interactive settings menu:
 
 ```bash
-python Nyx-AI-Translator.py
+run-windows.bat
 ```
 
 Then choose:
