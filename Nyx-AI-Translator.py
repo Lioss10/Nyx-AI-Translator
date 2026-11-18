@@ -427,6 +427,21 @@ def make_output_path(source: Path, target_language: str, output_ext: str, overwr
         n += 1
 
 
+def translation_already_exists(video: Path, target_language: str) -> Path | None:
+    """Check if a translated subtitle already exists next to a video file.
+
+    Looks for files like Episode.ar.srt, Episode.ar.ass, etc.
+    Returns the path if found, None otherwise.
+    """
+    code = normalize_language(target_language)
+    stem = strip_known_language_suffix(video.stem)
+    for ext in SUPPORTED_SUBTITLES:
+        candidate = video.with_name(f"{stem}.{code}{ext}")
+        if candidate.exists():
+            return candidate
+    return None
+
+
 # --------------------------- providers -------------------------------------
 
 def chunk_units(units: list[TranslationUnit], max_chars: int = 3500) -> list[list[TranslationUnit]]:
@@ -1129,11 +1144,24 @@ def interactive(cfg: dict[str, Any]) -> None:
                 continue
             recursive_answer = prompt("Include subfolders? (recursive)", "n").lower()
             recursive = recursive_answer in {"y", "yes"}
+            print("\nTrack selection when a video has multiple subtitle tracks:")
+            print("  [1] Ask me per video (default)")
+            print("  [2] Always pick the first track")
+            print("  [3] Match by language code (e.g. en, ja)")
+            strategy_choice = prompt("Track strategy", "1")
+            if strategy_choice == "2":
+                track_strategy = "first"
+            elif strategy_choice == "3":
+                lang_code = prompt("Language code to match (e.g. en, ja, es)")
+                track_strategy = f"lang:{lang_code.strip().lower()}"
+            else:
+                track_strategy = "ask"
             source = prompt("Source language", cfg["general"].get("default_source_language", "auto"))
             target = prompt("Target language")
             provider = choose_provider(cfg)
             try:
-                failed = process_folder(folder, source, target, provider, cfg, recursive=recursive)
+                failed = process_folder(folder, source, target, provider, cfg,
+                                        recursive=recursive, track_strategy=track_strategy)
                 if failed:
                     print(f"\n{failed} file(s) failed — see output above for details.")
             except Exception as exc:
@@ -1180,13 +1208,35 @@ def _format_track_choice(track: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
-def _pick_subtitle_track(tracks: list[dict[str, Any]], video_name: str) -> dict[str, Any] | None:
-    """Auto-pick if one track, prompt if multiple, return None if none."""
+def _pick_subtitle_track(tracks: list[dict[str, Any]], video_name: str,
+                         strategy: str = "ask") -> dict[str, Any] | None:
+    """Pick a subtitle track based on strategy.
+
+    Strategies:
+      - 'ask'      : auto-pick if one track, prompt if multiple (default)
+      - 'first'    : always pick the first track
+      - 'lang:XX'  : pick the track matching language XX, skip if no match
+    """
     if not tracks:
         return None
     if len(tracks) == 1:
         return tracks[0]
-    # Multiple tracks — ask the user
+
+    # Strategy: first — always pick index 0
+    if strategy == "first":
+        return tracks[0]
+
+    # Strategy: lang:XX — match by language code
+    if strategy.startswith("lang:"):
+        target_lang = strategy.split(":", 1)[1].strip().lower()
+        for t in tracks:
+            if t.get("language", "").lower() == target_lang:
+                return t
+        # No match — skip this video
+        print(f"  ⊘ No track matching language '{target_lang}' — skipping", file=sys.stderr)
+        return None
+
+    # Strategy: ask — prompt the user
     print(f"\n  Subtitle tracks in {video_name}:", file=sys.stderr)
     for t in tracks:
         print(f"    [{t['subtitle_index']}] {_format_track_choice(t)}", file=sys.stderr)
@@ -1208,7 +1258,7 @@ def _pick_subtitle_track(tracks: list[dict[str, Any]], video_name: str) -> dict[
 
 def process_folder(folder: Path, source_language: str, target_language: str,
                    provider: str, cfg: dict[str, Any], overwrite: bool = False,
-                   recursive: bool = False) -> int:
+                   recursive: bool = False, track_strategy: str = "ask") -> int:
     """Process all video files in a folder, extracting and translating embedded subtitles.
 
     Returns the number of files that failed (0 = all succeeded).
@@ -1238,6 +1288,13 @@ def process_folder(folder: Path, source_language: str, target_language: str,
         print(f"{header}", file=sys.stderr)
         print(f"{'─' * len(header)}", file=sys.stderr)
 
+        if not overwrite:
+            existing = translation_already_exists(video, target_language)
+            if existing:
+                print(f"  ⊘ Already translated → {existing.name} (use --overwrite to redo)", file=sys.stderr)
+                skipped += 1
+                continue
+
         try:
             tracks = ffprobe_subtitle_tracks(video)
         except Exception as exc:
@@ -1250,9 +1307,9 @@ def process_folder(folder: Path, source_language: str, target_language: str,
             skipped += 1
             continue
 
-        track = _pick_subtitle_track(tracks, video.name)
+        track = _pick_subtitle_track(tracks, video.name, strategy=track_strategy)
         if track is None:
-            print(f"  ⊘ Skipped by user", file=sys.stderr)
+            print(f"  ⊘ Skipped", file=sys.stderr)
             skipped += 1
             continue
 
@@ -1300,6 +1357,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--folder", help="Folder path for batch embedded subtitle translation of all video files")
     parser.add_argument("--recursive", action="store_true", help="Include subfolders when using --folder")
     parser.add_argument("--track", type=int, help="Embedded subtitle track number from subtitle stream list")
+    parser.add_argument("--track-strategy", default="ask",
+                        help="Track selection for batch mode: 'ask' (prompt per video, default), 'first' (always pick first track), 'lang:XX' (pick track matching language code, e.g. lang:en)")
     parser.add_argument("--from", dest="source_language", default="auto", help="Source language code/name")
     parser.add_argument("--to", dest="target_language", help="Target language code/name")
     parser.add_argument("--provider", default=None, help="Provider: free/openrouter/openai/gemini/deepl/google_cloud/azure/ollama/custom_openai/auto")
@@ -1360,6 +1419,7 @@ def main(argv: list[str] | None = None) -> int:
         failures = process_folder(
             folder, args.source_language, args.target_language,
             provider, cfg, overwrite=args.overwrite, recursive=args.recursive,
+            track_strategy=args.track_strategy,
         )
         return 1 if failures else 0
     interactive(cfg)

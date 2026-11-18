@@ -258,6 +258,26 @@ run-windows.bat --folder "C:\Anime" --from en --to ar --provider openrouter --re
 
 Translated subtitles are saved next to each video file.
 
+### Skip already-translated files
+
+Batch mode automatically skips videos that already have a translated subtitle for the target language (e.g. `Episode 01.ar.srt`). To force re-translation, add `--overwrite`.
+
+### Track selection strategy
+
+When videos have multiple subtitle tracks, use `--track-strategy` to control how tracks are picked:
+
+| Strategy | Behavior |
+|---|---|
+| `ask` | Prompt per video (default) |
+| `first` | Always pick the first track |
+| `lang:XX` | Pick the track matching language code XX, skip if no match |
+
+Example — translate only English tracks unattended:
+
+```bash
+run-windows.bat --folder "C:\Anime" --from en --to ar --provider openrouter --track-strategy lang:eng
+```
+
 ## Bitmap/PGS subtitle OCR
 
 Blu-ray rips often use PGS (image-based) subtitles that cannot be extracted as text. Nyx-AI-Translator detects bitmap subtitle codecs (PGS, VobSub) and automatically uses `pgsrip` to OCR them into SRT text before translation.

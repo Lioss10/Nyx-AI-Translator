@@ -311,3 +311,57 @@ def test_ensure_embedded_dependencies_raises_actionable_install_message(monkeypa
     assert "ffmpeg" in msg
     # Install hint is platform-specific (winget on Windows, apt on Linux)
     assert "ffmpeg" in msg.lower()
+
+
+# --- skip-if-translated and track strategy tests ---
+
+
+def test_translation_already_exists_finds_srt(tmp_path):
+    nyx = load_module()
+    video = tmp_path / "Episode 01.mkv"
+    video.write_text("fake", encoding="utf-8")
+    existing = tmp_path / "Episode 01.ar.srt"
+    existing.write_text("1\n00:00:01,000 --> 00:00:02,000\nمرحبا\n", encoding="utf-8")
+
+    result = nyx.translation_already_exists(video, "ar")
+    assert result is not None
+    assert result.name == "Episode 01.ar.srt"
+
+
+def test_translation_already_exists_returns_none_when_missing(tmp_path):
+    nyx = load_module()
+    video = tmp_path / "Episode 01.mkv"
+    video.write_text("fake", encoding="utf-8")
+
+    result = nyx.translation_already_exists(video, "ar")
+    assert result is None
+
+
+def test_pick_subtitle_track_strategy_first():
+    nyx = load_module()
+    tracks = [
+        {"subtitle_index": 0, "language": "eng", "codec": "subrip", "default": True, "forced": False, "title": "English"},
+        {"subtitle_index": 1, "language": "jpn", "codec": "ass", "default": False, "forced": False, "title": "Japanese"},
+    ]
+    picked = nyx._pick_subtitle_track(tracks, "test.mkv", strategy="first")
+    assert picked["language"] == "eng"
+
+
+def test_pick_subtitle_track_strategy_lang_match():
+    nyx = load_module()
+    tracks = [
+        {"subtitle_index": 0, "language": "eng", "codec": "subrip", "default": True, "forced": False, "title": "English"},
+        {"subtitle_index": 1, "language": "jpn", "codec": "ass", "default": False, "forced": False, "title": "Japanese"},
+    ]
+    picked = nyx._pick_subtitle_track(tracks, "test.mkv", strategy="lang:jpn")
+    assert picked["language"] == "jpn"
+
+
+def test_pick_subtitle_track_strategy_lang_no_match():
+    nyx = load_module()
+    tracks = [
+        {"subtitle_index": 0, "language": "eng", "codec": "subrip", "default": True, "forced": False, "title": "English"},
+        {"subtitle_index": 1, "language": "jpn", "codec": "ass", "default": False, "forced": False, "title": "Japanese"},
+    ]
+    picked = nyx._pick_subtitle_track(tracks, "test.mkv", strategy="lang:kor")
+    assert picked is None
