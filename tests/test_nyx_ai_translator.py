@@ -350,6 +350,29 @@ def test_translation_already_exists_finds_failed_variant(tmp_path):
     assert result.name == "Episode 01.ar.failed.ass"
 
 
+def test_translation_already_exists_matches_alternate_codes(tmp_path):
+    """'ar' and 'ara' should be treated as the same language."""
+    nyx = load_module()
+    video = tmp_path / "Episode 01.mkv"
+    video.write_text("fake", encoding="utf-8")
+    # First run used 'ara' (ISO 639-3)
+    existing = tmp_path / "Episode 01.ara.srt"
+    existing.write_text("subtitle", encoding="utf-8")
+
+    # Second run uses 'ar' (ISO 639-1) — should still detect it
+    result = nyx.translation_already_exists(video, "ar")
+    assert result is not None
+    assert result.name == "Episode 01.ara.srt"
+
+    # And vice versa: file is .ar.ass, user passes 'ara'
+    existing2 = tmp_path / "Episode 01.ar.ass"
+    existing2.write_text("subtitle", encoding="utf-8")
+    existing.unlink()  # remove the .ara.srt so only .ar.ass remains
+    result2 = nyx.translation_already_exists(video, "ara")
+    assert result2 is not None
+    assert result2.name == "Episode 01.ar.ass"
+
+
 def test_pick_subtitle_track_strategy_first():
     nyx = load_module()
     tracks = [

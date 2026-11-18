@@ -38,18 +38,32 @@ QUALITY_STOPWORDS = {
 }
 
 LANGUAGE_ALIASES = {
-    "arabic": "ar",
-    "english": "en",
-    "japanese": "ja",
-    "korean": "ko",
-    "french": "fr",
-    "spanish": "es",
-    "german": "de",
-    "italian": "it",
-    "portuguese": "pt",
-    "turkish": "tr",
-    "chinese": "zh",
-    "russian": "ru",
+    # Full names → ISO 639-1
+    "arabic": "ar", "english": "en", "japanese": "ja", "korean": "ko",
+    "french": "fr", "spanish": "es", "german": "de", "italian": "it",
+    "portuguese": "pt", "turkish": "tr", "chinese": "zh", "russian": "ru",
+    "hindi": "hi", "thai": "th", "vietnamese": "vi", "indonesian": "id",
+    "malay": "ms", "persian": "fa", "farsi": "fa", "hebrew": "he",
+    "polish": "pl", "dutch": "nl", "swedish": "sv", "norwegian": "no",
+    "danish": "da", "finnish": "fi", "greek": "el", "czech": "cs",
+    "romanian": "ro", "hungarian": "hu", "ukrainian": "uk", "bengali": "bn",
+    "tamil": "ta", "urdu": "ur", "swahili": "sw", "filipino": "tl",
+    "tagalog": "tl", "catalan": "ca", "croatian": "hr", "serbian": "sr",
+    "slovak": "sk", "slovenian": "sl", "bulgarian": "bg", "latvian": "lv",
+    "lithuanian": "lt", "estonian": "et", "icelandic": "is",
+    # ISO 639-3 (3-letter) → ISO 639-1 (2-letter)
+    "ara": "ar", "eng": "en", "jpn": "ja", "kor": "ko", "fra": "fr",
+    "fre": "fr", "spa": "es", "deu": "de", "ger": "de", "ita": "it",
+    "por": "pt", "tur": "tr", "zho": "zh", "chi": "zh", "rus": "ru",
+    "hin": "hi", "tha": "th", "vie": "vi", "ind": "id", "msa": "ms",
+    "may": "ms", "fas": "fa", "per": "fa", "heb": "he", "pol": "pl",
+    "nld": "nl", "dut": "nl", "swe": "sv", "nor": "no", "dan": "da",
+    "fin": "fi", "ell": "el", "gre": "el", "ces": "cs", "cze": "cs",
+    "ron": "ro", "rum": "ro", "hun": "hu", "ukr": "uk", "ben": "bn",
+    "tam": "ta", "urd": "ur", "swa": "sw", "fil": "tl", "tgl": "tl",
+    "cat": "ca", "hrv": "hr", "srp": "sr", "slk": "sk", "slo": "sk",
+    "slv": "sl", "bul": "bg", "lav": "lv", "lit": "lt", "est": "et",
+    "isl": "is", "ice": "is",
     "auto": "auto",
 }
 
@@ -427,18 +441,38 @@ def make_output_path(source: Path, target_language: str, output_ext: str, overwr
         n += 1
 
 
+def _language_code_variants(code: str) -> set[str]:
+    """Return all known equivalent language codes for a given code.
+
+    For example, 'ar' → {'ar', 'ara'}, 'ja' → {'ja', 'jpn'}, etc.
+    This ensures we detect existing translations regardless of which
+    code variant was used to create them.
+    """
+    code = code.lower()
+    variants = {code}
+    # Collect all aliases that map to the same normalized code
+    normalized = LANGUAGE_ALIASES.get(code, code)
+    variants.add(normalized)
+    for alias, target in LANGUAGE_ALIASES.items():
+        if target == normalized and len(alias) <= 3:  # only short codes, not full names
+            variants.add(alias)
+    return variants
+
+
 def translation_already_exists(video: Path, target_language: str) -> Path | None:
     """Check if a translated subtitle already exists next to a video file.
 
-    Looks for files like Episode.ar.srt, Episode.ar.ass, and also
-    Episode.ar.failed.srt (validation-failed output) so that files
-    that need manual review aren't silently re-translated every run.
+    Looks for files like Episode.ar.srt, Episode.ara.ass, and also
+    .failed and numbered variants. Handles mismatched language codes
+    (ar vs ara) by checking all known equivalent codes.
     Returns the path if found, None otherwise.
     """
     code = normalize_language(target_language)
     stem = strip_known_language_suffix(video.stem)
-    # Match: stem.code.ext, stem.code.failed.ext, stem.code.N.ext (numbered dedup)
-    pattern = re.compile(re.escape(f"{stem}.{code}") + r"(?:\.failed|\.(\d+))?" + r"\.\w+$", re.IGNORECASE)
+    codes = _language_code_variants(code)
+    # Build pattern matching any code variant, with optional .failed or .N suffix
+    code_alt = "|".join(re.escape(c) for c in sorted(codes))
+    pattern = re.compile(re.escape(stem) + r"\.(?:" + code_alt + r")(?:\.failed|\.\d+)?\.\w+$", re.IGNORECASE)
     for sibling in video.parent.iterdir():
         if sibling.is_file() and sibling.suffix.lower() in SUPPORTED_SUBTITLES and pattern.match(sibling.name):
             return sibling
