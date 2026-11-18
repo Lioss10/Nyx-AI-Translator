@@ -122,7 +122,7 @@ Timing, style, font, ASS tags, and subtitle structure stay in the correct place.
 - **Required for embedded subtitle mode:**
   - `ffprobe`
   - `ffmpeg`
-  - Install with the tool: `run-windows.bat --install-deps --yes` on Windows, or the OS command printed by `--check`.
+  - Install with the tool: `run-windows.bat --install-deps --yes`, or the OS command printed by `--check`.
 - **Required for bitmap/PGS subtitle OCR:**
   - `pgsrip` — `pip install "pgsrip[rapidocr]"`
   - `mkvmerge` from MKVToolNix
@@ -183,21 +183,21 @@ sudo apt install ffmpeg mkvtoolnix
 
 `mkvextract` / MKVToolNix is optional for future robust MKV handling. v1 uses ffmpeg extraction.
 
+## Running the tool
+
+All examples below use `run-windows.bat`. On macOS/Linux, replace it with `python Nyx-AI-Translator.py` — all flags and arguments are the same.
+
 ## Check requirements
 
 ```bash
 run-windows.bat --check
 ```
 
-> On macOS/Linux, use `python Nyx-AI-Translator.py --check` instead.
-
 ## Interactive use
 
 ```bash
 run-windows.bat
 ```
-
-> On macOS/Linux, use `python Nyx-AI-Translator.py` instead.
 
 Menu:
 
@@ -214,8 +214,6 @@ Menu:
 ```bash
 run-windows.bat --subtitle "Episode 01.en.srt" --from en --to ar --provider free
 ```
-
-> On macOS/Linux: `python Nyx-AI-Translator.py --subtitle "Episode 01.en.srt" --from en --to ar --provider free`
 
 Output:
 
@@ -248,13 +246,13 @@ Episode 01.ar.ass
 Translate all video files in a folder at once. The tool scans each video for embedded subtitle tracks, auto-picks when there is a single track, and prompts if there are multiple.
 
 ```bash
-run-windows.bat --folder "/path/to/anime-season" --from en --to ar --provider openrouter
+run-windows.bat --folder "C:\Anime\Season 1" --from en --to ar --provider openrouter
 ```
 
 Recursive mode (includes subfolders):
 
 ```bash
-run-windows.bat --folder "/path/to/library" --from en --to ar --provider openrouter --recursive
+run-windows.bat --folder "C:\Anime" --from en --to ar --provider openrouter --recursive
 ```
 
 Translated subtitles are saved next to each video file.
