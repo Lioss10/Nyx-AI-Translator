@@ -365,3 +365,33 @@ def test_pick_subtitle_track_strategy_lang_no_match():
     ]
     picked = nyx._pick_subtitle_track(tracks, "test.mkv", strategy="lang:kor")
     assert picked is None
+
+
+def test_parse_json_mapping_repairs_trailing_comma():
+    nyx = load_module()
+    raw = '[{"id": "1", "text": "مرحبا"}, {"id": "2", "text": "وداعا"},]'
+    parsed = nyx.parse_json_mapping(raw)
+    assert parsed == {"1": "مرحبا", "2": "وداعا"}
+
+
+def test_translate_units_retries_on_json_error(monkeypatch):
+    """translate_units retries a chunk up to MAX_CHUNK_RETRIES on JSON errors."""
+    nyx = load_module()
+    import json as json_mod
+
+    call_count = 0
+
+    def flaky_chunk(units, src, tgt, prov, cfg, progress=None):
+        nonlocal call_count
+        call_count += 1
+        if call_count < 3:
+            raise json_mod.JSONDecodeError("Expecting ',' delimiter", "", 123)
+        return {u.id: f"translated-{u.id}" for u in units}
+
+    monkeypatch.setattr(nyx, "translate_chunk", flaky_chunk)
+
+    units = [nyx.TranslationUnit(id="1", text="hello", original_text="hello")]
+    result = nyx.translate_units(units, "en", "ar", "openrouter",
+                                  {"general": {"default_provider": "openrouter"}})
+    assert result == {"1": "translated-1"}
+    assert call_count == 3  # failed twice, succeeded on third

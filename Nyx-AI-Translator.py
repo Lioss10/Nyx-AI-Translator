@@ -461,6 +461,9 @@ def chunk_units(units: list[TranslationUnit], max_chars: int = 3500) -> list[lis
     return chunks
 
 
+MAX_CHUNK_RETRIES = 3
+
+
 def translate_units(units: list[TranslationUnit], source_language: str, target_language: str, provider: str, cfg: dict[str, Any], retry_smaller: bool = False, progress: Callable[[str], None] | None = None) -> dict[str, str]:
     provider = provider or cfg["general"].get("default_provider", "free")
     translations: dict[str, str] = {}
@@ -469,7 +472,26 @@ def translate_units(units: list[TranslationUnit], source_language: str, target_l
     for idx, chunk in enumerate(chunks, 1):
         if progress and len(chunks) > 1:
             progress(f"Translating chunk {idx}/{len(chunks)} ({len(chunk)} subtitle text units)")
-        translations.update(translate_chunk(chunk, source_language, target_language, provider, cfg, progress=progress))
+        last_err: Exception | None = None
+        for attempt in range(1, MAX_CHUNK_RETRIES + 1):
+            try:
+                translations.update(translate_chunk(chunk, source_language, target_language, provider, cfg, progress=progress))
+                last_err = None
+                break
+            except (json.JSONDecodeError, ValueError, KeyError) as exc:
+                last_err = exc
+                if progress:
+                    progress(f"  ⟳ Chunk {idx} attempt {attempt}/{MAX_CHUNK_RETRIES} failed ({type(exc).__name__}), retrying…")
+        if last_err is not None:
+            # Last resort: split the chunk in half and try each piece
+            if len(chunk) > 1:
+                mid = len(chunk) // 2
+                if progress:
+                    progress(f"  ⟳ Splitting chunk {idx} into two smaller pieces and retrying…")
+                for half in (chunk[:mid], chunk[mid:]):
+                    translations.update(translate_chunk(half, source_language, target_language, provider, cfg, progress=progress))
+            else:
+                raise RuntimeError(f"Chunk {idx} failed after {MAX_CHUNK_RETRIES} retries: {last_err}") from last_err
     return translations
 
 
@@ -553,17 +575,36 @@ def repair_invalid_json_escapes(text: str) -> str:
     return re.sub(r"\\(?![\\\"/bfnrtu])", r"\\\\", text)
 
 
-def parse_json_mapping(text: str) -> dict[str, str]:
+def _strip_json_fences(text: str) -> str:
+    """Remove markdown code fences that LLMs sometimes wrap around JSON."""
     text = text.strip()
     if text.startswith("```"):
         text = re.sub(r"^```(?:json)?\s*", "", text)
         text = re.sub(r"\s*```$", "", text)
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as exc:
-        if "Invalid \\escape" not in str(exc):
-            raise
-        data = json.loads(repair_invalid_json_escapes(text))
+    return text
+
+
+def _repair_json(text: str) -> str:
+    """Apply progressively aggressive repairs for common LLM JSON mistakes."""
+    # 1) Fix invalid backslash escapes (ASS markers like \N, \h)
+    text = repair_invalid_json_escapes(text)
+    # 2) Remove trailing commas before ] or }
+    text = re.sub(r",\s*([}\]])", r"\1", text)
+    # 3) Strip control characters that break JSON (except \n \r \t)
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", text)
+    return text
+
+
+def parse_json_mapping(text: str) -> dict[str, str]:
+    text = _strip_json_fences(text)
+    # Try strict parse first, then repaired parse
+    for attempt, src in enumerate([text, _repair_json(text)]):
+        try:
+            data = json.loads(src)
+            break
+        except json.JSONDecodeError:
+            if attempt == 1:
+                raise
     if isinstance(data, list):
         return {str(item["id"]): str(item["text"]) for item in data}
     if isinstance(data, dict):
