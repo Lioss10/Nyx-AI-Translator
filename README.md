@@ -109,7 +109,7 @@ Timing, style, font, ASS tags, and subtitle structure stay in the correct place.
 - Same-folder output using language suffix naming, e.g. `Episode 01.ar.ass`.
 - Free/default provider via `deep-translator` for rough/testing translations with no API key.
 - Recommended quality provider: OpenRouter/OpenAI/Gemini-style LLMs.
-- Default OpenRouter model: `openai/gpt-6-luna`.
+- Default OpenRouter model: `openai/gpt-4o-mini`.
 - Requirement checker.
 - Validation and smaller-chunk retry on failure.
 

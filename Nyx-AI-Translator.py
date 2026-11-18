@@ -107,7 +107,7 @@ def default_config() -> dict[str, Any]:
         },
         "providers": {
             "free": {"enabled": True, "provider": "deep-translator", "fallback_provider": "mymemory"},
-            "openrouter": {"enabled": False, "api_key": "", "model": "openai/gpt-6-luna", "base_url": "https://openrouter.ai/api/v1"},
+            "openrouter": {"enabled": False, "api_key": "", "model": "openai/gpt-4o-mini", "base_url": "https://openrouter.ai/api/v1"},
             "openai": {"enabled": False, "api_key": "", "model": "gpt-4o-mini", "base_url": "https://api.openai.com/v1"},
             "gemini": {"enabled": False, "api_key": "", "model": "gemini-1.5-flash"},
             "deepl": {"enabled": False, "api_key": "", "endpoint": "https://api-free.deepl.com/v2/translate"},

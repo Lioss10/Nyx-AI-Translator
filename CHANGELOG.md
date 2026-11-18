@@ -12,7 +12,7 @@
   - Works seamlessly in both `--video` and `--folder` modes.
   - Detects codecs: `hdmv_pgs_subtitle`, `pgssub`, `dvd_subtitle`, `dvdsub`, `xsub`.
   - Requires `pgsrip` (`pip install "pgsrip[rapidocr]"`) and MKVToolNix.
-- **Default OpenRouter model changed** to `openai/gpt-6-luna` (was `gpt-4o-mini`).
+- Default OpenRouter model: `openai/gpt-4o-mini`.
 - Requirement checker (`--check`) now reports `pgsrip` status and bitmap OCR availability.
 
 ### Internal
