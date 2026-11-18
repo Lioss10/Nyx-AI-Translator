@@ -730,7 +730,8 @@ def find_executable(name: str) -> str | None:
         candidates.append(path)
     try:
         shell_cmd = ["where", name] if platform.system().lower() == "windows" else ["which", "-a", name]
-        cp = subprocess.run(shell_cmd, text=True, capture_output=True, timeout=10, check=False)
+        cp = subprocess.run(shell_cmd, capture_output=True, timeout=10, check=False,
+                            text=True, encoding="utf-8", errors="replace")
         if cp.returncode == 0:
             candidates.extend([line.strip() for line in cp.stdout.splitlines() if line.strip()])
     except Exception:
@@ -749,7 +750,8 @@ def find_executable(name: str) -> str | None:
 
 
 def run_command(args: list[str], timeout: int = 120) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(args, text=True, capture_output=True, timeout=timeout, check=False)
+    return subprocess.run(args, capture_output=True, timeout=timeout, check=False,
+                          text=True, encoding="utf-8", errors="replace")
 
 
 REQUIRED_EMBEDDED_TOOLS = ("ffprobe", "ffmpeg")
