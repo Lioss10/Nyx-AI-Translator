@@ -129,7 +129,7 @@ def test_interactive_embedded_scan_error_does_not_crash(tmp_path, monkeypatch, c
     nyx = load_module()
     video = tmp_path / "demo.mkv"
     video.write_text("not a real video", encoding="utf-8")
-    answers = iter(["1", str(video), "n", "5"])
+    answers = iter(["1", str(video), "n", "6"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
     monkeypatch.setattr(nyx, "ffprobe_subtitle_tracks", lambda _video: (_ for _ in ()).throw(RuntimeError("ffprobe failed badly")))
 
@@ -157,7 +157,7 @@ def test_interactive_external_provider_error_does_not_crash(tmp_path, monkeypatc
     nyx = load_module()
     sub = tmp_path / "demo.en.srt"
     sub.write_text("1\n00:00:01,000 --> 00:00:02,000\nHello\n", encoding="utf-8")
-    answers = iter(["2", str(sub), "en", "ar", "1", "5"])
+    answers = iter(["2", str(sub), "en", "ar", "1", "6"])
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(answers))
     monkeypatch.setattr(nyx, "translate_subtitle_file", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("free provider exploded")))
 

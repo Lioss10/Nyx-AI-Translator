@@ -1060,9 +1060,10 @@ def interactive(cfg: dict[str, Any]) -> None:
         print(f"\n{APP_NAME} v{VERSION}\n")
         print("[1] Embedded subtitle inside video")
         print("[2] External subtitle file")
-        print("[3] Settings / Providers")
-        print("[4] Check requirements")
-        print("[5] Exit")
+        print("[3] Batch folder mode")
+        print("[4] Settings / Providers")
+        print("[5] Check requirements")
+        print("[6] Exit")
         choice = prompt("Choice")
         if choice == "1":
             video = Path(prompt("Enter video file path").strip().strip('"').strip("'"))
@@ -1122,10 +1123,27 @@ def interactive(cfg: dict[str, Any]) -> None:
                 continue
             print(f"\nDone:\n{out}")
         elif choice == "3":
-            settings_menu(cfg)
+            folder = Path(prompt("Enter folder path").strip().strip('"').strip("'"))
+            if not folder.is_dir():
+                print("Folder not found.")
+                continue
+            recursive_answer = prompt("Include subfolders? (recursive)", "n").lower()
+            recursive = recursive_answer in {"y", "yes"}
+            source = prompt("Source language", cfg["general"].get("default_source_language", "auto"))
+            target = prompt("Target language")
+            provider = choose_provider(cfg)
+            try:
+                failed = process_folder(folder, source, target, provider, cfg, recursive=recursive)
+                if failed:
+                    print(f"\n{failed} file(s) failed — see output above for details.")
+            except Exception as exc:
+                print(f"Batch folder translation failed: {exc}")
+                continue
         elif choice == "4":
-            print_requirement_report()
+            settings_menu(cfg)
         elif choice == "5":
+            print_requirement_report()
+        elif choice == "6":
             return
 
 

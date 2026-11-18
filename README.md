@@ -204,9 +204,10 @@ Menu:
 ```text
 [1] Embedded subtitle inside video
 [2] External subtitle file
-[3] Settings / Providers
-[4] Check requirements
-[5] Exit
+[3] Batch folder mode
+[4] Settings / Providers
+[5] Check requirements
+[6] Exit
 ```
 
 ## External subtitle example
