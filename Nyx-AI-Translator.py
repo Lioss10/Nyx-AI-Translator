@@ -22,9 +22,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 APP_NAME = "Nyx-AI-Translator"
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 SUPPORTED_SUBTITLES = {".srt", ".ass", ".ssa", ".vtt", ".webvtt"}
 VIDEO_EXTENSIONS = {".mkv", ".mp4", ".m4v", ".avi", ".mov", ".webm"}
+BITMAP_SUBTITLE_CODECS = {"hdmv_pgs_subtitle", "pgssub", "dvd_subtitle", "dvdsub", "xsub"}
 LANG_CODE_RE = re.compile(r"^[a-z]{2,3}(?:-[A-Za-z]{2,4})?$")
 ASS_TAG_RE = re.compile(r"\{[^{}]*\}")
 ASS_CONTROL_RE = re.compile(r"\\[Nnh]")
@@ -106,7 +107,7 @@ def default_config() -> dict[str, Any]:
         },
         "providers": {
             "free": {"enabled": True, "provider": "deep-translator", "fallback_provider": "mymemory"},
-            "openrouter": {"enabled": False, "api_key": "", "model": "openai/gpt-4o-mini", "base_url": "https://openrouter.ai/api/v1"},
+            "openrouter": {"enabled": False, "api_key": "", "model": "openai/gpt-6-luna", "base_url": "https://openrouter.ai/api/v1"},
             "openai": {"enabled": False, "api_key": "", "model": "gpt-4o-mini", "base_url": "https://api.openai.com/v1"},
             "gemini": {"enabled": False, "api_key": "", "model": "gemini-1.5-flash"},
             "deepl": {"enabled": False, "api_key": "", "endpoint": "https://api-free.deepl.com/v2/translate"},
@@ -804,10 +805,13 @@ def print_requirement_report() -> None:
     for tool in OPTIONAL_TOOLS:
         path = req["tools"].get(tool)
         print(f"{tool}: {'OK - ' + path if path else 'missing optional'}")
+    pgsrip_path = shutil.which("pgsrip")
+    print(f"pgsrip: {'OK - ' + pgsrip_path if pgsrip_path else 'missing (needed for bitmap/PGS subtitle OCR)'}")
     print("\nModes:")
     print("external subtitle: available")
     embedded_ok = all(req["tools"].get(tool) for tool in REQUIRED_EMBEDDED_TOOLS)
-    print(f"embedded subtitle: {'available' if embedded_ok else 'unavailable (needs ffprobe + ffmpeg)'}")
+    print(f"embedded subtitle (text): {'available' if embedded_ok else 'unavailable (needs ffprobe + ffmpeg)'}")
+    print(f"embedded subtitle (PGS/bitmap OCR): {'available' if pgsrip_path else 'unavailable — install with: pip install \"pgsrip[rapidocr]\"'}")
     if not embedded_ok:
         print("\nInstall embedded-mode dependencies:")
         print(system_dependency_help(include_optional=False))
@@ -866,6 +870,81 @@ def extract_embedded_subtitle(video: Path, track: dict[str, Any], temp_dir: Path
     if cp.returncode != 0 or not out.exists() or out.stat().st_size == 0:
         raise RuntimeError(cp.stderr.strip() or "ffmpeg subtitle extraction failed")
     return out
+
+
+def is_bitmap_subtitle(track: dict[str, Any]) -> bool:
+    """Return True if the track uses a bitmap/image-based subtitle codec (PGS, VobSub, etc.)."""
+    codec = (track.get("codec") or "").lower()
+    return codec in BITMAP_SUBTITLE_CODECS or "pgs" in codec or "dvd_sub" in codec
+
+
+def find_pgsrip() -> str | None:
+    """Return pgsrip executable path, or None if not installed."""
+    return shutil.which("pgsrip")
+
+
+def _find_srt_for_video(directory: Path, stem: str) -> list[Path]:
+    """Find .srt files matching a video stem using plain string matching (not glob).
+
+    Glob breaks on filenames with square brackets, so we iterate the
+    directory and match with str.startswith() instead.
+    """
+    prefix = stem + "."
+    results = []
+    try:
+        for f in directory.iterdir():
+            if f.is_file() and f.suffix.lower() == ".srt" and f.name.startswith(prefix):
+                results.append(f)
+    except OSError:
+        pass
+    return sorted(results, key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def ocr_bitmap_subtitle(video: Path, track: dict[str, Any], progress: Callable[[str], None] | None = None) -> Path:
+    """Use pgsrip to OCR a bitmap subtitle track from a video file to SRT.
+
+    pgsrip writes the .srt next to the video file. Returns the path to the generated SRT.
+    """
+    pgsrip = find_pgsrip()
+    if not pgsrip:
+        raise RuntimeError(
+            "pgsrip is required for bitmap (PGS/VobSub) subtitles but was not found.\n"
+            "Install it with:  pip install \"pgsrip[rapidocr]\"\n"
+            "Also install MKVToolNix (mkvmerge). See: https://github.com/ratoaq2/pgsrip"
+        )
+    lang = track.get("language", "und")
+    if progress:
+        progress(f"Bitmap subtitle detected (codec={track.get('codec')}). Running OCR with pgsrip...")
+    # Snapshot existing .srt files before running pgsrip so we can detect new ones
+    parent = video.parent
+    stem = video.stem
+    existing_srts = {f for f in parent.iterdir() if f.is_file() and f.suffix.lower() == ".srt"}
+    # pgsrip writes SRT next to the video, e.g. video.en.srt
+    args = [pgsrip, "-l", lang, str(video)]
+    cp = run_command(args, timeout=600)
+    if cp.returncode != 0:
+        stderr_msg = cp.stderr.strip() if cp.stderr else ""
+        raise RuntimeError(f"pgsrip failed: {stderr_msg or 'unknown error'}")
+    # Find the SRT that pgsrip created — uses plain string matching, not glob,
+    # because filenames with brackets [] break glob patterns
+    candidates = _find_srt_for_video(parent, stem)
+    if not candidates:
+        # Fallback: detect any brand-new .srt files that appeared after pgsrip ran
+        current_srts = {f for f in parent.iterdir() if f.is_file() and f.suffix.lower() == ".srt"}
+        new_srts = sorted((current_srts - existing_srts), key=lambda p: p.stat().st_mtime, reverse=True)
+        if new_srts:
+            candidates = new_srts
+    if not candidates:
+        # Last resort: check current working directory (pgsrip may write there instead)
+        cwd = Path.cwd()
+        if cwd != parent:
+            candidates = _find_srt_for_video(cwd, stem)
+    if not candidates:
+        raise RuntimeError(f"pgsrip ran but no .srt file was found next to {video.name}")
+    srt_path = candidates[0]
+    if progress:
+        progress(f"OCR complete: {srt_path.name}")
+    return srt_path
 
 
 # --------------------------- workflow --------------------------------------
@@ -1064,6 +1143,133 @@ def install_requirements_prompt() -> None:
     print("py -3 Nyx-AI-Translator.py --install-deps --yes" if platform.system().lower() == "windows" else "python Nyx-AI-Translator.py --install-deps --yes")
 
 
+def _format_track_choice(track: dict[str, Any]) -> str:
+    """Format a subtitle track dict as a human-readable label for selection."""
+    parts = [f"#{track['subtitle_index']}"]
+    parts.append(f"lang={track['language']}")
+    if track.get("title"):
+        parts.append(f'"{track["title"]}"')
+    parts.append(f"codec={track['codec']}")
+    flags = []
+    if track.get("default"):
+        flags.append("default")
+    if track.get("forced"):
+        flags.append("forced")
+    if is_bitmap_subtitle(track):
+        flags.append("bitmap/PGS — needs OCR")
+    if flags:
+        parts.append(f"[{', '.join(flags)}]")
+    return " ".join(parts)
+
+
+def _pick_subtitle_track(tracks: list[dict[str, Any]], video_name: str) -> dict[str, Any] | None:
+    """Auto-pick if one track, prompt if multiple, return None if none."""
+    if not tracks:
+        return None
+    if len(tracks) == 1:
+        return tracks[0]
+    # Multiple tracks — ask the user
+    print(f"\n  Subtitle tracks in {video_name}:", file=sys.stderr)
+    for t in tracks:
+        print(f"    [{t['subtitle_index']}] {_format_track_choice(t)}", file=sys.stderr)
+    while True:
+        try:
+            choice = input(f"  Pick track for {video_name} (0-{len(tracks)-1}, or 's' to skip): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return None
+        if choice.lower() == "s":
+            return None
+        try:
+            idx = int(choice)
+            if 0 <= idx < len(tracks):
+                return tracks[idx]
+        except ValueError:
+            pass
+        print(f"  Invalid choice. Enter 0-{len(tracks)-1} or 's' to skip.", file=sys.stderr)
+
+
+def process_folder(folder: Path, source_language: str, target_language: str,
+                   provider: str, cfg: dict[str, Any], overwrite: bool = False,
+                   recursive: bool = False) -> int:
+    """Process all video files in a folder, extracting and translating embedded subtitles.
+
+    Returns the number of files that failed (0 = all succeeded).
+    """
+    ensure_embedded_dependencies(offer_install=False)
+
+    # Collect video files
+    if recursive:
+        videos = sorted(f for f in folder.rglob("*") if f.suffix.lower() in VIDEO_EXTENSIONS and f.is_file())
+    else:
+        videos = sorted(f for f in folder.iterdir() if f.suffix.lower() in VIDEO_EXTENSIONS and f.is_file())
+
+    if not videos:
+        print(f"No video files found in {folder}", file=sys.stderr)
+        return 0
+
+    print(f"\nFound {len(videos)} video file(s) in {folder}\n", file=sys.stderr)
+
+    tmp = Path(os.environ.get("TEMP", ".")) / "nyx-ai-translator"
+    succeeded = 0
+    failed = 0
+    skipped = 0
+    progress = lambda msg: print(f"  {msg}", file=sys.stderr, flush=True)
+
+    for i, video in enumerate(videos, 1):
+        header = f"[{i}/{len(videos)}] {video.name}"
+        print(f"{header}", file=sys.stderr)
+        print(f"{'─' * len(header)}", file=sys.stderr)
+
+        try:
+            tracks = ffprobe_subtitle_tracks(video)
+        except Exception as exc:
+            print(f"  ✗ Could not read tracks: {exc}", file=sys.stderr)
+            failed += 1
+            continue
+
+        if not tracks:
+            print(f"  ✗ No subtitle tracks found — skipping", file=sys.stderr)
+            skipped += 1
+            continue
+
+        track = _pick_subtitle_track(tracks, video.name)
+        if track is None:
+            print(f"  ⊘ Skipped by user", file=sys.stderr)
+            skipped += 1
+            continue
+
+        print(f"  Using track {_format_track_choice(track)}", file=sys.stderr)
+
+        try:
+            if is_bitmap_subtitle(track):
+                # PGS/VobSub — OCR to SRT first, then translate the SRT
+                srt_path = ocr_bitmap_subtitle(video, track, progress=progress)
+                out = translate_subtitle_file(
+                    srt_path, source_language, target_language, provider, cfg,
+                    output_base=video, overwrite=overwrite, progress=progress,
+                )
+            else:
+                # Text subtitle — extract with ffmpeg and translate directly
+                extracted = extract_embedded_subtitle(video, track, tmp)
+                out = translate_subtitle_file(
+                    extracted, source_language, target_language, provider, cfg,
+                    output_base=video, overwrite=overwrite, progress=progress,
+                )
+            print(f"  ✓ {out}", file=sys.stderr)
+            print(out)
+            succeeded += 1
+        except Exception as exc:
+            print(f"  ✗ Failed: {exc}", file=sys.stderr)
+            failed += 1
+
+        print(file=sys.stderr)
+
+    # Summary
+    print(f"\n{'═' * 40}", file=sys.stderr)
+    print(f"Batch complete: {succeeded} translated, {skipped} skipped, {failed} failed out of {len(videos)} video(s)", file=sys.stderr)
+    return failed
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Structure-preserving AI subtitle translator")
     parser.add_argument("setup", nargs="?", help="Use 'setup' to show setup/install help")
@@ -1073,6 +1279,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--yes", action="store_true", help="Do not prompt during dependency install")
     parser.add_argument("--subtitle", help="External subtitle path")
     parser.add_argument("--video", help="Video path for embedded subtitle mode")
+    parser.add_argument("--folder", help="Folder path for batch embedded subtitle translation of all video files")
+    parser.add_argument("--recursive", action="store_true", help="Include subfolders when using --folder")
     parser.add_argument("--track", type=int, help="Embedded subtitle track number from subtitle stream list")
     parser.add_argument("--from", dest="source_language", default="auto", help="Source language code/name")
     parser.add_argument("--to", dest="target_language", help="Target language code/name")
@@ -1110,15 +1318,32 @@ def main(argv: list[str] | None = None) -> int:
             tracks = ffprobe_subtitle_tracks(video)
             if args.track < 0 or args.track >= len(tracks):
                 raise ValueError(f"track must be between 0 and {len(tracks) - 1}")
-            tmp = Path(os.environ.get("TEMP", ".")) / "nyx-ai-translator"
-            extracted = extract_embedded_subtitle(video, tracks[args.track], tmp)
-            out = translate_subtitle_file(extracted, args.source_language, args.target_language, provider, cfg, output_base=video, overwrite=args.overwrite, progress=lambda msg: print(msg, file=sys.stderr, flush=True))
+            progress_fn = lambda msg: print(msg, file=sys.stderr, flush=True)
+            selected_track = tracks[args.track]
+            if is_bitmap_subtitle(selected_track):
+                srt_path = ocr_bitmap_subtitle(video, selected_track, progress=progress_fn)
+                out = translate_subtitle_file(srt_path, args.source_language, args.target_language, provider, cfg, output_base=video, overwrite=args.overwrite, progress=progress_fn)
+            else:
+                tmp = Path(os.environ.get("TEMP", ".")) / "nyx-ai-translator"
+                extracted = extract_embedded_subtitle(video, selected_track, tmp)
+                out = translate_subtitle_file(extracted, args.source_language, args.target_language, provider, cfg, output_base=video, overwrite=args.overwrite, progress=progress_fn)
         except Exception as exc:
             print(f"Embedded subtitle translation failed: {exc}", file=sys.stderr)
             print("Tip: run `.\\run-windows.bat --check` on Windows (or `python Nyx-AI-Translator.py --check`) and install missing requirements from README/WINDOWS_QUICK_START.md.", file=sys.stderr)
             return 1
         print(out)
         return 0
+    if args.folder:
+        if not args.target_language:
+            raise SystemExit("--to is required with --folder")
+        folder = Path(args.folder)
+        if not folder.is_dir():
+            raise SystemExit(f"Not a directory: {folder}")
+        failures = process_folder(
+            folder, args.source_language, args.target_language,
+            provider, cfg, overwrite=args.overwrite, recursive=args.recursive,
+        )
+        return 1 if failures else 0
     interactive(cfg)
     return 0
 

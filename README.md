@@ -99,6 +99,8 @@ Timing, style, font, ASS tags, and subtitle structure stay in the correct place.
 - Interactive CLI for normal users.
 - External subtitle translation: `.srt`, `.ass`, `.ssa`, `.vtt`, `.webvtt`.
 - Embedded subtitle extraction from video files with `ffprobe` + `ffmpeg`.
+- **Bitmap/PGS subtitle OCR**: automatic OCR of image-based subtitles (PGS, VobSub) via `pgsrip`, then translation of the resulting text.
+- **Batch folder mode** (`--folder`): process all video files in a directory in one command. Auto-picks single subtitle tracks; prompts when multiple exist.
 - Manual embedded subtitle track selection.
 - Translate from/to any language supported by the selected provider.
 - ASS/SSA preservation: timing, styles, fields, and override tags are kept.
@@ -107,6 +109,7 @@ Timing, style, font, ASS tags, and subtitle structure stay in the correct place.
 - Same-folder output using language suffix naming, e.g. `Episode 01.ar.ass`.
 - Free/default provider via `deep-translator` for rough/testing translations with no API key.
 - Recommended quality provider: OpenRouter/OpenAI/Gemini-style LLMs.
+- Default OpenRouter model: `openai/gpt-6-luna`.
 - Requirement checker.
 - Validation and smaller-chunk retry on failure.
 
@@ -120,6 +123,9 @@ Timing, style, font, ASS tags, and subtitle structure stay in the correct place.
   - `ffprobe`
   - `ffmpeg`
   - Install with the tool: `py -3 Nyx-AI-Translator.py --install-deps --yes` on Windows, or the OS command printed by `--check`.
+- **Required for bitmap/PGS subtitle OCR:**
+  - `pgsrip` — `pip install "pgsrip[rapidocr]"`
+  - `mkvmerge` from MKVToolNix
 - Optional but recommended for future robust MKV extraction:
   - `mkvextract` from MKVToolNix
 
@@ -231,6 +237,58 @@ Output:
 Episode 01.ar.ass
 ```
 
+## Batch folder mode
+
+Translate all video files in a folder at once. The tool scans each video for embedded subtitle tracks, auto-picks when there is a single track, and prompts if there are multiple.
+
+```bash
+python Nyx-AI-Translator.py --folder "/path/to/anime-season" --from en --to ar --provider openrouter
+```
+
+Recursive mode (includes subfolders):
+
+```bash
+python Nyx-AI-Translator.py --folder "/path/to/library" --from en --to ar --provider openrouter --recursive
+```
+
+Translated subtitles are saved next to each video file.
+
+## Bitmap/PGS subtitle OCR
+
+Blu-ray rips often use PGS (image-based) subtitles that cannot be extracted as text. Nyx-AI-Translator detects bitmap subtitle codecs (PGS, VobSub) and automatically uses `pgsrip` to OCR them into SRT text before translation.
+
+Install the OCR dependencies:
+
+```bash
+pip install "pgsrip[rapidocr]"
+```
+
+Also install MKVToolNix (provides `mkvmerge`):
+
+### Windows
+
+```powershell
+winget install MoritzBunkus.MKVToolNix
+```
+
+### macOS
+
+```bash
+brew install mkvtoolnix
+```
+
+### Ubuntu/Debian
+
+```bash
+sudo apt install mkvtoolnix
+```
+
+Then use normally — PGS tracks are handled automatically:
+
+```bash
+python Nyx-AI-Translator.py --video "bluray-episode.mkv" --track 0 --from en --to ar --provider openrouter
+```
+
 ## Provider configuration
 
 Run the interactive settings menu:
@@ -313,11 +371,10 @@ python -m pytest tests -q
 
 ## Status
 
-v0.1.0 is an MVP. It has working parsers/rebuilders, provider plumbing, config, and CLI. Next recommended work:
+v0.1.1 adds batch folder processing, bitmap/PGS subtitle OCR, and improved defaults. It has working parsers/rebuilders, provider plumbing, config, CLI, and batch mode. Next recommended work:
 
 - Better provider integration testing with real API keys.
 - Add mkvextract-first fallback for MKV subtitle extraction.
-- Add folder/batch mode.
 - Add more subtitle edge-case tests.
 - Add optional translator note.
 
