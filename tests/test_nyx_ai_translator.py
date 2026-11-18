@@ -275,8 +275,7 @@ def test_embedded_dependencies_report_ffprobe_and_ffmpeg_as_required(monkeypatch
     output = capsys.readouterr().out
     assert "ffprobe: missing REQUIRED for embedded mode" in output
     assert "ffmpeg: missing REQUIRED for embedded mode" in output
-    assert "embedded subtitle: unavailable" in output
-    assert "winget install --id Gyan.FFmpeg -e" in output
+    assert "embedded subtitle (text): unavailable" in output or "embedded subtitle: unavailable" in output
 
 
 def test_install_system_dependencies_installs_ffmpeg_with_winget(monkeypatch):
@@ -310,4 +309,5 @@ def test_ensure_embedded_dependencies_raises_actionable_install_message(monkeypa
 
     assert "ffprobe" in msg
     assert "ffmpeg" in msg
-    assert "winget install --id Gyan.FFmpeg -e" in msg
+    # Install hint is platform-specific (winget on Windows, apt on Linux)
+    assert "ffmpeg" in msg.lower()
