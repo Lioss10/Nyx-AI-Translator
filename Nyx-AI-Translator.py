@@ -129,6 +129,7 @@ def default_config() -> dict[str, Any]:
             "azure": {"enabled": False, "api_key": "", "endpoint": "", "region": ""},
             "ollama": {"enabled": False, "base_url": "http://localhost:11434", "model": "llama3.1"},
             "custom_openai": {"enabled": False, "api_key": "", "base_url": "", "model": ""},
+            "claude_cli": {"enabled": False, "model": "claude-opus-4-6"},
         },
     }
 
@@ -336,7 +337,51 @@ def parse_vtt(text: str, ext: str) -> SubtitleDocument:
     return SubtitleDocument(format="vtt", input_ext=ext, output_ext=".srt", original_lines=text.splitlines(), units=units, cues=cues)
 
 
-def rebuild_subtitle(doc: SubtitleDocument, translations: dict[str, str]) -> str:
+def get_model_label(provider: str, cfg: dict[str, Any]) -> str:
+    """Return a human-readable model/provider label for metadata."""
+    if provider == "free":
+        return "free (deep-translator)"
+    if provider in OPENAI_COMPATIBLE_PROVIDERS:
+        pcfg = cfg.get("providers", {}).get(provider, {})
+        model = pcfg.get("model", "unknown")
+        return f"{provider}/{model}" if provider != "openrouter" else model
+    if provider == "gemini":
+        pcfg = cfg.get("providers", {}).get("gemini", {})
+        return pcfg.get("model", "gemini")
+    if provider == "deepl":
+        return "DeepL"
+    if provider == "google_cloud":
+        return "Google Cloud Translation"
+    if provider == "azure":
+        return "Azure Translator"
+    if provider == "ollama":
+        pcfg = cfg.get("providers", {}).get("ollama", {})
+        return f"ollama/{pcfg.get('model', 'unknown')}"
+    if provider == "claude_cli":
+        pcfg = cfg.get("providers", {}).get("claude_cli", {})
+        return f"claude-cli/{pcfg.get('model', 'claude-opus-4-6')}"
+    return provider
+
+
+def _build_metadata_comment(doc: SubtitleDocument, provider: str, cfg: dict[str, Any],
+                            source_language: str, target_language: str) -> str:
+    """Build a format-appropriate metadata comment for the output file."""
+    model_label = get_model_label(provider, cfg)
+    timestamp = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+    lines = [
+        f"Translated by {APP_NAME} v{VERSION}",
+        f"Model: {model_label}",
+        f"Languages: {source_language} → {target_language}",
+        f"Date: {timestamp}",
+    ]
+    if doc.format == "ass":
+        return "\n".join(f"; {l}" for l in lines) + "\n"
+    # SRT/VTT: plain comment lines before the first cue (players ignore them)
+    return "\n".join(f"# {l}" for l in lines) + "\n\n"
+
+
+def rebuild_subtitle(doc: SubtitleDocument, translations: dict[str, str],
+                     metadata: str | None = None) -> str:
     if doc.format == "ass":
         lines = list(doc.original_lines)
         for unit in doc.units:
@@ -349,14 +394,29 @@ def rebuild_subtitle(doc: SubtitleDocument, translations: dict[str, str]) -> str
                 continue
             prefix, _old_text = parsed
             lines[unit.line_index] = prefix + translated
-        return "\n".join(lines) + ("\n" if doc.original_lines else "")
+        result = "\n".join(lines) + ("\n" if doc.original_lines else "")
+        if metadata:
+            # Insert comment lines after [Script Info] header if present, else at top
+            script_info_idx = None
+            for i, l in enumerate(lines):
+                if l.strip().lower() == "[script info]":
+                    script_info_idx = i
+                    break
+            insert_pos = (script_info_idx + 1) if script_info_idx is not None else 0
+            new_lines = list(lines)
+            new_lines.insert(insert_pos, metadata.rstrip("\n"))
+            result = "\n".join(new_lines) + ("\n" if doc.original_lines else "")
+        return result
     if doc.format in {"srt", "vtt"}:
         blocks: list[str] = []
         for cue in doc.cues:
             unit_id = cue["unit_id"]
             text = translations.get(unit_id, "")
             blocks.append(f"{cue['number']}\n{cue['start']} --> {cue['end']}\n{text}")
-        return "\n\n".join(blocks) + ("\n" if blocks else "")
+        result = "\n\n".join(blocks) + ("\n" if blocks else "")
+        if metadata:
+            result = metadata + result
+        return result
     raise ValueError(f"Unsupported doc format: {doc.format}")
 
 
@@ -534,7 +594,7 @@ def translate_units(units: list[TranslationUnit], source_language: str, target_l
 
 def translate_chunk(units: list[TranslationUnit], source_language: str, target_language: str, provider: str, cfg: dict[str, Any], progress: Callable[[str], None] | None = None) -> dict[str, str]:
     if provider == "auto":
-        for candidate in [cfg["general"].get("default_provider", "free"), "free", "openrouter", "openai", "gemini", "ollama"]:
+        for candidate in [cfg["general"].get("default_provider", "free"), "free", "openrouter", "openai", "gemini", "claude_cli", "ollama"]:
             try:
                 return translate_chunk(units, source_language, target_language, candidate, cfg, progress=progress)
             except Exception:
@@ -550,6 +610,8 @@ def translate_chunk(units: list[TranslationUnit], source_language: str, target_l
         return translate_deepl(units, source_language, target_language, cfg)
     if provider == "ollama":
         return translate_ollama(units, source_language, target_language, cfg)
+    if provider == "claude_cli":
+        return translate_claude_cli(units, source_language, target_language, cfg)
     if provider == "google_cloud":
         return translate_google_cloud(units, source_language, target_language, cfg)
     if provider == "azure":
@@ -720,6 +782,44 @@ def translate_ollama(units: list[TranslationUnit], source_language: str, target_
     messages = translation_prompt(units, source_language, target_language)
     response = json_http(f"{base}/api/chat", {"model": model, "messages": messages, "stream": False}, timeout=180)
     return parse_json_mapping(response["message"]["content"])
+
+
+def translate_claude_cli(units: list[TranslationUnit], source_language: str, target_language: str, cfg: dict[str, Any]) -> dict[str, str]:
+    """Translate using the Claude Code CLI (uses the user's Claude subscription)."""
+    pcfg = cfg["providers"].get("claude_cli", {})
+    model = pcfg.get("model", "claude-opus-4-6")
+    claude_bin = shutil.which("claude")
+    if not claude_bin:
+        raise RuntimeError(
+            "Claude CLI not found. Install Claude Code first:\n"
+            "  npm install -g @anthropic-ai/claude-code\n"
+            "Then run 'claude' once to log in with your subscription."
+        )
+    messages = translation_prompt(units, source_language, target_language)
+    # Build a single prompt from system + user messages
+    prompt_text = messages[0]["content"] + "\n\n" + messages[1]["content"]
+    cmd = [claude_bin, "-p", "--model", model, "--output-format", "text"]
+    try:
+        result = subprocess.run(
+            cmd,
+            input=prompt_text,
+            capture_output=True,
+            text=True,
+            timeout=300,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except FileNotFoundError:
+        raise RuntimeError("Claude CLI not found in PATH. Is Claude Code installed?")
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("Claude CLI timed out after 5 minutes")
+    if result.returncode != 0:
+        err = (result.stderr or "").strip()
+        raise RuntimeError(f"Claude CLI failed (exit {result.returncode}): {err}")
+    content = result.stdout.strip()
+    if not content:
+        raise RuntimeError("Claude CLI returned empty output")
+    return parse_json_mapping(content)
 
 
 def translate_google_cloud(units: list[TranslationUnit], source_language: str, target_language: str, cfg: dict[str, Any]) -> dict[str, str]:
@@ -1055,14 +1155,17 @@ def translate_subtitle_file(path: Path, source_language: str, target_language: s
     if progress:
         progress(f"Parsed {len(doc.units)} subtitle text unit(s) from {path.name}")
         progress(f"Translating {len(doc.units)} subtitle text unit(s) with provider '{provider}'")
+    effective_provider = provider or cfg["general"].get("default_provider", "free")
     translations = translate_units(doc.units, source_language, target_language, provider, cfg, progress=progress)
-    output = rebuild_subtitle(doc, translations)
+    metadata = _build_metadata_comment(doc, effective_provider, cfg, source_language, target_language)
+    output = rebuild_subtitle(doc, translations, metadata=metadata)
     result = validate_output(doc, output, target_language)
     if not result.ok:
         if progress:
             progress("Validation failed; retrying with smaller chunks")
         translations = translate_units(doc.units, source_language, target_language, provider, cfg, retry_smaller=True, progress=progress)
-        output = rebuild_subtitle(doc, translations)
+        metadata = _build_metadata_comment(doc, effective_provider, cfg, source_language, target_language)
+        output = rebuild_subtitle(doc, translations, metadata=metadata)
         result = validate_output(doc, output, target_language)
     if progress and result.warnings:
         for warning in result.warnings:
@@ -1086,7 +1189,7 @@ def prompt(msg: str, default: str | None = None) -> str:
 
 
 def choose_provider(cfg: dict[str, Any]) -> str:
-    providers = ["free", "openrouter", "openai", "gemini", "deepl", "google_cloud", "azure", "ollama", "custom_openai", "auto"]
+    providers = ["free", "openrouter", "openai", "gemini", "deepl", "google_cloud", "azure", "ollama", "claude_cli", "custom_openai", "auto"]
     print("\nChoose provider:")
     for i, p in enumerate(providers, 1):
         print(f"[{i}] {p}")
@@ -1098,7 +1201,7 @@ def choose_provider(cfg: dict[str, Any]) -> str:
 
 
 def configure_provider(cfg: dict[str, Any]) -> None:
-    providers = ["openrouter", "openai", "gemini", "deepl", "google_cloud", "azure", "ollama", "custom_openai"]
+    providers = ["openrouter", "openai", "gemini", "deepl", "google_cloud", "azure", "ollama", "claude_cli", "custom_openai"]
     print("\nConfigure provider:")
     for i, p in enumerate(providers, 1):
         print(f"[{i}] {p}")
@@ -1108,7 +1211,11 @@ def configure_provider(cfg: dict[str, Any]) -> None:
     except Exception:
         return
     pcfg = cfg["providers"][name]
-    if name == "ollama":
+    if name == "claude_cli":
+        print("  Uses your Claude subscription via Claude Code CLI (no API key needed).")
+        print("  Requires: npm install -g @anthropic-ai/claude-code")
+        pcfg["model"] = prompt("Model", pcfg.get("model", "claude-opus-4-6"))
+    elif name == "ollama":
         pcfg["base_url"] = prompt("Ollama base URL", pcfg.get("base_url", "http://localhost:11434"))
         pcfg["model"] = prompt("Ollama model", pcfg.get("model", "llama3.1"))
     elif name == "custom_openai":
@@ -1132,7 +1239,7 @@ def settings_menu(cfg: dict[str, Any]) -> None:
     while True:
         print("\nProvider settings")
         for name, pcfg in cfg["providers"].items():
-            configured = bool(pcfg.get("api_key") or name in {"free", "ollama"})
+            configured = bool(pcfg.get("api_key") or name in {"free", "ollama", "claude_cli"})
             print(f"- {name}: {'configured' if configured else 'not configured'}")
         print("\n[1] Add/update provider key")
         print("[2] Choose default provider")
@@ -1441,7 +1548,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="Track selection for batch mode: 'ask' (prompt per video, default), 'first' (always pick first track), 'lang:XX' (pick track matching language code, e.g. lang:en)")
     parser.add_argument("--from", dest="source_language", default="auto", help="Source language code/name")
     parser.add_argument("--to", dest="target_language", help="Target language code/name")
-    parser.add_argument("--provider", default=None, help="Provider: free/openrouter/openai/gemini/deepl/google_cloud/azure/ollama/custom_openai/auto")
+    parser.add_argument("--provider", default=None, help="Provider: free/openrouter/openai/gemini/deepl/google_cloud/azure/ollama/claude_cli/custom_openai/auto")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing output")
     args = parser.parse_args(argv)
     cfg = load_config()
