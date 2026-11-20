@@ -30,7 +30,19 @@ LANG_CODE_RE = re.compile(r"^[a-z]{2,3}(?:-[A-Za-z]{2,4})?$")
 ASS_TAG_RE = re.compile(r"\{[^{}]*\}")
 ASS_CONTROL_RE = re.compile(r"\\[Nnh]")
 ARABIC_RE = re.compile(r"[\u0600-\u06FF]")
+HEBREW_RE = re.compile(r"[\u0590-\u05FF]")
 ENGLISH_WORD_RE = re.compile(r"\b[A-Za-z][A-Za-z']{2,}\b")
+
+# RTL punctuation pairs: subtitle renderers often don't mirror brackets/parens
+# for RTL text, so we pre-swap them in the output.
+RTL_PUNCT_SWAP = str.maketrans({
+    "[": "]", "]": "[",
+    "(": ")", ")": "(",
+    "\u00AB": "\u00BB", "\u00BB": "\u00AB",   # \u00AB \u00BB
+    "\u2018": "\u2019", "\u2019": "\u2018",   # ' '
+    "\u201C": "\u201D", "\u201D": "\u201C",   # " "
+})
+RTL_LANGUAGES = {"ar", "he", "fa", "ur", "yi", "arabic", "hebrew", "persian", "farsi", "urdu"}
 QUALITY_STOPWORDS = {
     "the", "and", "for", "you", "your", "are", "was", "were", "with", "that", "this", "from", "here", "next",
     "month", "during", "party", "evil", "slash", "skill", "send", "sends", "attack", "through", "air", "die",
@@ -378,6 +390,33 @@ def _build_metadata_comment(doc: SubtitleDocument, provider: str, cfg: dict[str,
         return "\n".join(f"; {l}" for l in lines) + "\n"
     # SRT/VTT: plain comment lines before the first cue (players ignore them)
     return "\n".join(f"# {l}" for l in lines) + "\n\n"
+
+
+def fix_rtl_punctuation(text: str) -> str:
+    """Swap paired punctuation (brackets, parens, quotes) for RTL subtitle display.
+
+    Most subtitle renderers (libass, etc.) don't perform Unicode BiDi mirroring,
+    so brackets appear on the wrong side of Arabic/Hebrew text.  Pre-swapping them
+    in the file makes the renderer show them in the visually correct position.
+    Only swaps characters that are *outside* ASS override tags {\\...}.
+    """
+    # Split into ASS tags vs. plain text so we don't break style overrides
+    parts = ASS_TAG_RE.split(text)
+    tags = ASS_TAG_RE.findall(text)
+    result: list[str] = []
+    for i, part in enumerate(parts):
+        result.append(part.translate(RTL_PUNCT_SWAP))
+        if i < len(tags):
+            result.append(tags[i])  # keep tags untouched
+    return "".join(result)
+
+
+def apply_rtl_fixes(translations: dict[str, str], target_language: str) -> dict[str, str]:
+    """Apply RTL punctuation fixes when target is a right-to-left language."""
+    lang = normalize_language(target_language).lower()
+    if lang not in RTL_LANGUAGES and not lang.startswith(("ar-", "he-", "fa-", "ur-")):
+        return translations
+    return {uid: fix_rtl_punctuation(text) for uid, text in translations.items()}
 
 
 def rebuild_subtitle(doc: SubtitleDocument, translations: dict[str, str],
@@ -1157,6 +1196,7 @@ def translate_subtitle_file(path: Path, source_language: str, target_language: s
         progress(f"Translating {len(doc.units)} subtitle text unit(s) with provider '{provider}'")
     effective_provider = provider or cfg["general"].get("default_provider", "free")
     translations = translate_units(doc.units, source_language, target_language, provider, cfg, progress=progress)
+    translations = apply_rtl_fixes(translations, target_language)
     metadata = _build_metadata_comment(doc, effective_provider, cfg, source_language, target_language)
     output = rebuild_subtitle(doc, translations, metadata=metadata)
     result = validate_output(doc, output, target_language)
@@ -1164,6 +1204,7 @@ def translate_subtitle_file(path: Path, source_language: str, target_language: s
         if progress:
             progress("Validation failed; retrying with smaller chunks")
         translations = translate_units(doc.units, source_language, target_language, provider, cfg, retry_smaller=True, progress=progress)
+        translations = apply_rtl_fixes(translations, target_language)
         metadata = _build_metadata_comment(doc, effective_provider, cfg, source_language, target_language)
         output = rebuild_subtitle(doc, translations, metadata=metadata)
         result = validate_output(doc, output, target_language)
