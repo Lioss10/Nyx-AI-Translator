@@ -43,6 +43,23 @@ RTL_PUNCT_SWAP = str.maketrans({
     "\u201C": "\u201D", "\u201D": "\u201C",   # " "
 })
 RTL_LANGUAGES = {"ar", "he", "fa", "ur", "yi", "arabic", "hebrew", "persian", "farsi", "urdu"}
+
+# Languages with grammatical gender where character gender context matters
+GENDERED_LANGUAGES = {"ar", "he", "fr", "es", "de", "it", "pt", "ru", "pl", "cs", "uk", "hi", "ur", "fa",
+                      "arabic", "hebrew", "french", "spanish", "german", "italian", "portuguese",
+                      "russian", "polish", "czech", "ukrainian", "hindi", "urdu", "persian", "farsi"}
+
+# Show name extraction from common subtitle filename patterns
+# e.g. "Sayonara Zetsubou Sensei (2007) - S01E10 - ..." or "[SubGroup] Show Name - 10.ass"
+SHOW_NAME_RE = re.compile(
+    r"^(?:\[[^\]]*\]\s*)?"          # optional [SubGroup]
+    r"(.+?)"                         # show name (non-greedy)
+    r"(?:\s*\(\d{4}\))?"            # optional (year)
+    r"\s*[-–—]\s*"                  # separator dash
+    r"(?:S\d|E\d|\d{1,4}(?:\s*[-–v.]|\s*\[|\s*$))",  # season/episode indicator
+    re.IGNORECASE,
+)
+
 QUALITY_STOPWORDS = {
     "the", "and", "for", "you", "your", "are", "was", "were", "with", "that", "this", "from", "here", "next",
     "month", "during", "party", "evil", "slash", "skill", "send", "sends", "attack", "through", "air", "die",
@@ -600,7 +617,7 @@ def chunk_units(units: list[TranslationUnit], max_chars: int = 3500) -> list[lis
 MAX_CHUNK_RETRIES = 3
 
 
-def translate_units(units: list[TranslationUnit], source_language: str, target_language: str, provider: str, cfg: dict[str, Any], retry_smaller: bool = False, progress: Callable[[str], None] | None = None) -> dict[str, str]:
+def translate_units(units: list[TranslationUnit], source_language: str, target_language: str, provider: str, cfg: dict[str, Any], retry_smaller: bool = False, progress: Callable[[str], None] | None = None, gender_context: str = "") -> dict[str, str]:
     provider = provider or cfg["general"].get("default_provider", "free")
     translations: dict[str, str] = {}
     max_chars = 1800 if retry_smaller else 3500
@@ -611,7 +628,7 @@ def translate_units(units: list[TranslationUnit], source_language: str, target_l
         last_err: Exception | None = None
         for attempt in range(1, MAX_CHUNK_RETRIES + 1):
             try:
-                translations.update(translate_chunk(chunk, source_language, target_language, provider, cfg, progress=progress))
+                translations.update(translate_chunk(chunk, source_language, target_language, provider, cfg, progress=progress, gender_context=gender_context))
                 last_err = None
                 break
             except (json.JSONDecodeError, ValueError, KeyError) as exc:
@@ -625,32 +642,32 @@ def translate_units(units: list[TranslationUnit], source_language: str, target_l
                 if progress:
                     progress(f"  ⟳ Splitting chunk {idx} into two smaller pieces and retrying…")
                 for half in (chunk[:mid], chunk[mid:]):
-                    translations.update(translate_chunk(half, source_language, target_language, provider, cfg, progress=progress))
+                    translations.update(translate_chunk(half, source_language, target_language, provider, cfg, progress=progress, gender_context=gender_context))
             else:
                 raise RuntimeError(f"Chunk {idx} failed after {MAX_CHUNK_RETRIES} retries: {last_err}") from last_err
     return translations
 
 
-def translate_chunk(units: list[TranslationUnit], source_language: str, target_language: str, provider: str, cfg: dict[str, Any], progress: Callable[[str], None] | None = None) -> dict[str, str]:
+def translate_chunk(units: list[TranslationUnit], source_language: str, target_language: str, provider: str, cfg: dict[str, Any], progress: Callable[[str], None] | None = None, gender_context: str = "") -> dict[str, str]:
     if provider == "auto":
         for candidate in [cfg["general"].get("default_provider", "free"), "free", "openrouter", "openai", "gemini", "claude_cli", "ollama"]:
             try:
-                return translate_chunk(units, source_language, target_language, candidate, cfg, progress=progress)
+                return translate_chunk(units, source_language, target_language, candidate, cfg, progress=progress, gender_context=gender_context)
             except Exception:
                 continue
         raise RuntimeError("No provider succeeded")
     if provider == "free":
         return translate_free(units, source_language, target_language, progress=progress)
     if provider in OPENAI_COMPATIBLE_PROVIDERS:
-        return translate_openai_compatible(units, source_language, target_language, provider, cfg)
+        return translate_openai_compatible(units, source_language, target_language, provider, cfg, gender_context=gender_context)
     if provider == "gemini":
-        return translate_gemini(units, source_language, target_language, cfg)
+        return translate_gemini(units, source_language, target_language, cfg, gender_context=gender_context)
     if provider == "deepl":
         return translate_deepl(units, source_language, target_language, cfg)
     if provider == "ollama":
-        return translate_ollama(units, source_language, target_language, cfg)
+        return translate_ollama(units, source_language, target_language, cfg, gender_context=gender_context)
     if provider == "claude_cli":
-        return translate_claude_cli(units, source_language, target_language, cfg)
+        return translate_claude_cli(units, source_language, target_language, cfg, gender_context=gender_context)
     if provider == "google_cloud":
         return translate_google_cloud(units, source_language, target_language, cfg)
     if provider == "azure":
@@ -750,7 +767,87 @@ def parse_json_mapping(text: str) -> dict[str, str]:
     raise ValueError("provider returned unsupported JSON shape")
 
 
-def translation_prompt(units: list[TranslationUnit], source_language: str, target_language: str) -> list[dict[str, str]]:
+def extract_show_name(path: Path) -> str:
+    """Try to extract a show/anime/movie name from a subtitle filename.
+
+    Handles common patterns:
+      - "Sayonara Zetsubou Sensei (2007) - S01E10 - Title.ass"
+      - "[SubGroup] Show Name - 10.ass"
+      - "Show.Name.S01E10.720p.ass"
+    Returns empty string if no show name can be reliably extracted.
+    """
+    stem = path.stem
+    # Remove common subtitle suffixes like ".track0", ".en", ".ar"
+    stem = re.sub(r"\.(track\d+|[a-z]{2,3})$", "", stem, flags=re.IGNORECASE)
+    m = SHOW_NAME_RE.match(stem)
+    if m:
+        return m.group(1).strip()
+    # Fallback: dot-separated names like "Show.Name.S01E10..."
+    dot_match = re.match(r"^(.+?)\.S\d{1,2}E\d{1,2}\b", stem, re.IGNORECASE)
+    if dot_match:
+        return dot_match.group(1).replace(".", " ").strip()
+    return ""
+
+
+def load_characters_glossary(subtitle_path: Path) -> list[dict[str, str]]:
+    """Load an optional character glossary file for gender-aware translation.
+
+    Looks for characters.json next to the subtitle file, or in its parent directory.
+    Expected format: a JSON list of objects with "name" and "gender" keys:
+      [{"name": "Nozomu", "gender": "male"}, {"name": "Kafuka", "gender": "female"}]
+    Returns empty list if no glossary found.
+    """
+    for search_dir in [subtitle_path.parent, subtitle_path.parent.parent]:
+        glossary_path = search_dir / "characters.json"
+        if glossary_path.is_file():
+            try:
+                data = json.loads(glossary_path.read_text(encoding="utf-8-sig"))
+                if isinstance(data, list):
+                    # Validate structure
+                    valid = []
+                    for entry in data:
+                        if isinstance(entry, dict) and "name" in entry and "gender" in entry:
+                            valid.append({"name": str(entry["name"]), "gender": str(entry["gender"]).lower()})
+                    return valid
+            except (json.JSONDecodeError, OSError):
+                pass
+    return []
+
+
+def build_gender_context(show_name: str, characters: list[dict[str, str]], target_language: str) -> str:
+    """Build a gender context string for the translation prompt.
+
+    Only produces output for gendered target languages (Arabic, Hebrew, etc.).
+    Carefully worded to prevent hallucination — the model should only use
+    gender info for characters that actually appear in the subtitle text.
+    """
+    lang = normalize_language(target_language).lower()
+    if lang not in GENDERED_LANGUAGES and not any(lang.startswith(p) for p in ("ar-", "he-", "fr-", "es-", "de-")):
+        return ""
+
+    parts: list[str] = []
+    if characters:
+        # Manual glossary takes priority — explicit character genders
+        char_lines = ", ".join(f"{c['name']} ({c['gender']})" for c in characters)
+        parts.append(
+            f"Character genders for correct grammatical conjugation: {char_lines}. "
+            "Use these genders ONLY for characters whose names appear in the subtitle text. "
+            "Do not invent genders for unnamed speakers or characters not in this list."
+        )
+    elif show_name:
+        # Auto mode: tell the model the show name so it can use its knowledge
+        parts.append(
+            f'These subtitles are from "{show_name}". '
+            "Use your knowledge of this show's characters to apply correct grammatical gender "
+            "(masculine/feminine) for verbs, adjectives, and pronouns in the translation. "
+            "ONLY apply gender for characters whose names appear in the subtitle text being translated. "
+            "If a speaker's gender is unknown or the name does not appear in the text, use masculine as the default."
+        )
+
+    return " ".join(parts)
+
+
+def translation_prompt(units: list[TranslationUnit], source_language: str, target_language: str, gender_context: str = "") -> list[dict[str, str]]:
     payload = [{"id": u.id, "text": u.text} for u in units]
     system = (
         "You are a subtitle translation engine. Translate only the text values. "
@@ -761,11 +858,13 @@ def translation_prompt(units: list[TranslationUnit], source_language: str, targe
         "Demon Lord as سيد الشياطين, Trial as تجربة/اختبار (not محاكمة unless it is a court trial), "
         "and Air Slash as ضربة هوائية or قَطعة هوائية. Keep Arabic phrasing concise for subtitle readability."
     )
+    if gender_context:
+        system += " " + gender_context
     user = f"Source language: {source_language}\nTarget language: {target_language}\nTranslate all subtitle text:\n{json.dumps(payload, ensure_ascii=False)}"
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 
-def translate_openai_compatible(units: list[TranslationUnit], source_language: str, target_language: str, provider: str, cfg: dict[str, Any]) -> dict[str, str]:
+def translate_openai_compatible(units: list[TranslationUnit], source_language: str, target_language: str, provider: str, cfg: dict[str, Any], gender_context: str = "") -> dict[str, str]:
     pcfg = cfg["providers"][provider]
     api_key = pcfg.get("api_key", "")
     base_url = pcfg.get("base_url", "").rstrip("/")
@@ -776,20 +875,20 @@ def translate_openai_compatible(units: list[TranslationUnit], source_language: s
         raise RuntimeError(f"{provider} base_url/model not configured")
     response = json_http(
         f"{base_url}/chat/completions",
-        {"model": model, "messages": translation_prompt(units, source_language, target_language), "temperature": 0.2},
+        {"model": model, "messages": translation_prompt(units, source_language, target_language, gender_context), "temperature": 0.2},
         headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
     )
     content = response["choices"][0]["message"]["content"]
     return parse_json_mapping(content)
 
 
-def translate_gemini(units: list[TranslationUnit], source_language: str, target_language: str, cfg: dict[str, Any]) -> dict[str, str]:
+def translate_gemini(units: list[TranslationUnit], source_language: str, target_language: str, cfg: dict[str, Any], gender_context: str = "") -> dict[str, str]:
     pcfg = cfg["providers"]["gemini"]
     key = pcfg.get("api_key")
     model = pcfg.get("model", "gemini-1.5-flash")
     if not key:
         raise RuntimeError("Gemini API key not configured")
-    prompt = "\n\n".join(m["content"] for m in translation_prompt(units, source_language, target_language))
+    prompt = "\n\n".join(m["content"] for m in translation_prompt(units, source_language, target_language, gender_context))
     response = json_http(
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}",
         {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": 0.2}},
@@ -814,16 +913,16 @@ def translate_deepl(units: list[TranslationUnit], source_language: str, target_l
     return out
 
 
-def translate_ollama(units: list[TranslationUnit], source_language: str, target_language: str, cfg: dict[str, Any]) -> dict[str, str]:
+def translate_ollama(units: list[TranslationUnit], source_language: str, target_language: str, cfg: dict[str, Any], gender_context: str = "") -> dict[str, str]:
     pcfg = cfg["providers"]["ollama"]
     base = pcfg.get("base_url", "http://localhost:11434").rstrip("/")
     model = pcfg.get("model", "llama3.1")
-    messages = translation_prompt(units, source_language, target_language)
+    messages = translation_prompt(units, source_language, target_language, gender_context)
     response = json_http(f"{base}/api/chat", {"model": model, "messages": messages, "stream": False}, timeout=180)
     return parse_json_mapping(response["message"]["content"])
 
 
-def translate_claude_cli(units: list[TranslationUnit], source_language: str, target_language: str, cfg: dict[str, Any]) -> dict[str, str]:
+def translate_claude_cli(units: list[TranslationUnit], source_language: str, target_language: str, cfg: dict[str, Any], gender_context: str = "") -> dict[str, str]:
     """Translate using the Claude Code CLI (uses the user's Claude subscription)."""
     pcfg = cfg["providers"].get("claude_cli", {})
     model = pcfg.get("model", "claude-opus-4-6")
@@ -834,7 +933,7 @@ def translate_claude_cli(units: list[TranslationUnit], source_language: str, tar
             "  npm install -g @anthropic-ai/claude-code\n"
             "Then run 'claude' once to log in with your subscription."
         )
-    messages = translation_prompt(units, source_language, target_language)
+    messages = translation_prompt(units, source_language, target_language, gender_context)
     # Build a single prompt from system + user messages
     prompt_text = messages[0]["content"] + "\n\n" + messages[1]["content"]
     cmd = [claude_bin, "-p", "--model", model, "--output-format", "text"]
@@ -1183,7 +1282,7 @@ def ocr_bitmap_subtitle(video: Path, track: dict[str, Any], progress: Callable[[
 
 # --------------------------- workflow --------------------------------------
 
-def translate_subtitle_file(path: Path, source_language: str, target_language: str, provider: str, cfg: dict[str, Any], output_base: Path | None = None, overwrite: bool | None = None, progress: Callable[[str], None] | None = None) -> Path:
+def translate_subtitle_file(path: Path, source_language: str, target_language: str, provider: str, cfg: dict[str, Any], output_base: Path | None = None, overwrite: bool | None = None, progress: Callable[[str], None] | None = None, show_name: str | None = None) -> Path:
     ext = path.suffix.lower()
     if ext not in SUPPORTED_SUBTITLES:
         raise ValueError(f"Unsupported subtitle file: {path}")
@@ -1195,7 +1294,17 @@ def translate_subtitle_file(path: Path, source_language: str, target_language: s
         progress(f"Parsed {len(doc.units)} subtitle text unit(s) from {path.name}")
         progress(f"Translating {len(doc.units)} subtitle text unit(s) with provider '{provider}'")
     effective_provider = provider or cfg["general"].get("default_provider", "free")
-    translations = translate_units(doc.units, source_language, target_language, provider, cfg, progress=progress)
+    # Build gender context for gendered languages (Arabic, Hebrew, etc.)
+    # Priority: manual characters.json > --show-name flag > auto-detect from filename
+    characters = load_characters_glossary(path)
+    effective_show = show_name or extract_show_name(output_base or path)
+    gender_context = build_gender_context(effective_show, characters, target_language)
+    if progress and gender_context:
+        if characters:
+            progress(f"Loaded character glossary ({len(characters)} characters) for gender-aware translation")
+        elif effective_show:
+            progress(f"Detected show: \"{effective_show}\" — using for gender-aware translation")
+    translations = translate_units(doc.units, source_language, target_language, provider, cfg, progress=progress, gender_context=gender_context)
     translations = apply_rtl_fixes(translations, target_language)
     metadata = _build_metadata_comment(doc, effective_provider, cfg, source_language, target_language)
     output = rebuild_subtitle(doc, translations, metadata=metadata)
@@ -1203,7 +1312,7 @@ def translate_subtitle_file(path: Path, source_language: str, target_language: s
     if not result.ok:
         if progress:
             progress("Validation failed; retrying with smaller chunks")
-        translations = translate_units(doc.units, source_language, target_language, provider, cfg, retry_smaller=True, progress=progress)
+        translations = translate_units(doc.units, source_language, target_language, provider, cfg, retry_smaller=True, progress=progress, gender_context=gender_context)
         translations = apply_rtl_fixes(translations, target_language)
         metadata = _build_metadata_comment(doc, effective_provider, cfg, source_language, target_language)
         output = rebuild_subtitle(doc, translations, metadata=metadata)
@@ -1486,7 +1595,8 @@ def _pick_subtitle_track(tracks: list[dict[str, Any]], video_name: str,
 
 def process_folder(folder: Path, source_language: str, target_language: str,
                    provider: str, cfg: dict[str, Any], overwrite: bool = False,
-                   recursive: bool = False, track_strategy: str = "ask") -> int:
+                   recursive: bool = False, track_strategy: str = "ask",
+                   show_name: str | None = None) -> int:
     """Process all video files in a folder, extracting and translating embedded subtitles.
 
     Returns the number of files that failed (0 = all succeeded).
@@ -1550,6 +1660,7 @@ def process_folder(folder: Path, source_language: str, target_language: str,
                 out = translate_subtitle_file(
                     srt_path, source_language, target_language, provider, cfg,
                     output_base=video, overwrite=overwrite, progress=progress,
+                    show_name=show_name,
                 )
             else:
                 # Text subtitle — extract with ffmpeg and translate directly
@@ -1557,6 +1668,7 @@ def process_folder(folder: Path, source_language: str, target_language: str,
                 out = translate_subtitle_file(
                     extracted, source_language, target_language, provider, cfg,
                     output_base=video, overwrite=overwrite, progress=progress,
+                    show_name=show_name,
                 )
             print(f"  ✓ {out}", file=sys.stderr)
             print(out)
@@ -1590,6 +1702,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--from", dest="source_language", default="auto", help="Source language code/name")
     parser.add_argument("--to", dest="target_language", help="Target language code/name")
     parser.add_argument("--provider", default=None, help="Provider: free/openrouter/openai/gemini/deepl/google_cloud/azure/ollama/claude_cli/custom_openai/auto")
+    parser.add_argument("--show-name", default=None, help="Show/anime/movie name for gender-aware translation (auto-detected from filename if omitted)")
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing output")
     args = parser.parse_args(argv)
     cfg = load_config()
@@ -1607,7 +1720,7 @@ def main(argv: list[str] | None = None) -> int:
         if not args.target_language:
             raise SystemExit("--to is required with --subtitle")
         try:
-            out = translate_subtitle_file(Path(args.subtitle), args.source_language, args.target_language, provider, cfg, overwrite=args.overwrite, progress=lambda msg: print(msg, file=sys.stderr, flush=True))
+            out = translate_subtitle_file(Path(args.subtitle), args.source_language, args.target_language, provider, cfg, overwrite=args.overwrite, progress=lambda msg: print(msg, file=sys.stderr, flush=True), show_name=args.show_name)
         except Exception as exc:
             print(f"External subtitle translation failed: {exc}", file=sys.stderr)
             print("Tip: run `python Nyx-AI-Translator.py --check` and install missing requirements from README/WINDOWS_QUICK_START.md.", file=sys.stderr)
@@ -1627,11 +1740,11 @@ def main(argv: list[str] | None = None) -> int:
             selected_track = tracks[args.track]
             if is_bitmap_subtitle(selected_track):
                 srt_path = ocr_bitmap_subtitle(video, selected_track, progress=progress_fn)
-                out = translate_subtitle_file(srt_path, args.source_language, args.target_language, provider, cfg, output_base=video, overwrite=args.overwrite, progress=progress_fn)
+                out = translate_subtitle_file(srt_path, args.source_language, args.target_language, provider, cfg, output_base=video, overwrite=args.overwrite, progress=progress_fn, show_name=args.show_name)
             else:
                 tmp = Path(os.environ.get("TEMP", ".")) / "nyx-ai-translator"
                 extracted = extract_embedded_subtitle(video, selected_track, tmp)
-                out = translate_subtitle_file(extracted, args.source_language, args.target_language, provider, cfg, output_base=video, overwrite=args.overwrite, progress=progress_fn)
+                out = translate_subtitle_file(extracted, args.source_language, args.target_language, provider, cfg, output_base=video, overwrite=args.overwrite, progress=progress_fn, show_name=args.show_name)
         except Exception as exc:
             print(f"Embedded subtitle translation failed: {exc}", file=sys.stderr)
             print("Tip: run `.\\run-windows.bat --check` on Windows (or `python Nyx-AI-Translator.py --check`) and install missing requirements from README/WINDOWS_QUICK_START.md.", file=sys.stderr)
@@ -1647,7 +1760,7 @@ def main(argv: list[str] | None = None) -> int:
         failures = process_folder(
             folder, args.source_language, args.target_language,
             provider, cfg, overwrite=args.overwrite, recursive=args.recursive,
-            track_strategy=args.track_strategy,
+            track_strategy=args.track_strategy, show_name=args.show_name,
         )
         return 1 if failures else 0
     interactive(cfg)

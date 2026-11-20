@@ -223,7 +223,7 @@ def test_translate_subtitle_file_reports_progress_before_provider_work(tmp_path,
     sub.write_text("1\n00:00:01,000 --> 00:00:02,000\nHello\n", encoding="utf-8")
     messages = []
 
-    def fake_translate_units(units, source_language, target_language, provider, cfg, retry_smaller=True, progress=None):
+    def fake_translate_units(units, source_language, target_language, provider, cfg, retry_smaller=True, progress=None, gender_context=""):
         messages.append("provider-called")
         return {units[0].id: "مرحبا"}
 
@@ -417,7 +417,7 @@ def test_translate_units_retries_on_json_error(monkeypatch):
 
     call_count = 0
 
-    def flaky_chunk(units, src, tgt, prov, cfg, progress=None):
+    def flaky_chunk(units, src, tgt, prov, cfg, progress=None, gender_context=""):
         nonlocal call_count
         call_count += 1
         if call_count < 3:
